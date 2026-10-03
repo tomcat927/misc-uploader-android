@@ -13,9 +13,20 @@ object UploadPlanning {
     fun autoDirFor(mtimeMs: Long): String =
         AUTO_ROOT + "/" + SimpleDateFormat("yyyy/MM", Locale.CHINA).format(Date(mtimeMs))
 
-    /** 拼完整远程路径:根目录 "/" 时去掉多余斜杠 */
+    /** 目录归一:以 "/" 开头、去尾部斜杠 */
+    fun normalizeDir(dir: String): String {
+        val d = dir.trim().trimEnd('/')
+        return when {
+            d.isEmpty() || d == "/" -> "/"
+            d.startsWith("/") -> d
+            else -> "/$d"
+        }
+    }
+
+    /** 拼完整远程路径:保证以 "/" 开头 */
     fun joinRemotePath(dir: String, rel: String): String {
         val d = dir.trim().trimEnd('/')
-        return if (d.isEmpty()) "/$rel" else "$d/$rel"
+        val joined = if (d.isEmpty()) rel else "$d/$rel"
+        return if (joined.startsWith("/")) joined else "/$joined"
     }
 }

@@ -44,12 +44,13 @@ class UploadRepository @Inject constructor(
             val now = System.currentTimeMillis()
             val items = tasks.mapNotNull { t ->
                 if (!t.file.isFile) return@mapNotNull null
+                val dir = UploadPlanning.normalizeDir(t.remoteDir)
                 UploadItemEntity(
                     localPath = t.file.absolutePath,
                     displayName = t.file.name,
                     size = t.file.length(),
-                    remoteDir = t.remoteDir,
-                    remotePath = UploadPlanning.joinRemotePath(t.remoteDir, t.rel),
+                    remoteDir = dir,
+                    remotePath = UploadPlanning.joinRemotePath(dir, t.rel),
                     state = UploadState.PENDING,
                     progress = 0,
                     enqueuedAt = now,
