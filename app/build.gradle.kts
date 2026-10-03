@@ -22,10 +22,11 @@ android {
 
     signingConfigs {
         create("ci") {
-            // keystore 由 CI 从 Actions secrets 解码;本地/未配置 secrets 时此配置为空壳
+            // keystore 由 CI 从 Actions secrets 解码(PKCS12,openssl 生成);本地/未配置 secrets 时此配置为空壳
             val path = System.getenv("ANDROID_KEYSTORE_PATH")
             if (!path.isNullOrEmpty()) {
                 storeFile = file(path)
+                storeType = "PKCS12"
                 storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
                 keyAlias = System.getenv("ANDROID_KEY_ALIAS")
                 keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
