@@ -3,6 +3,7 @@ package com.tomcat927.miscuploader.core
 import java.io.File
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -10,11 +11,13 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import okio.BufferedSink
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -64,7 +67,8 @@ class OpenListClient(
                 if (currentToken != null && currentToken != stale) {
                     currentToken
                 } else {
-                    runCatching { loginInternal() }.getOrNull()
+                    // OkHttp 回调线程(非协程):阻塞式重登一次,仅此一处允许 runBlocking
+                    runBlocking { runCatching { loginInternal() } }
                     currentToken
                 }
             } ?: return@authenticator null

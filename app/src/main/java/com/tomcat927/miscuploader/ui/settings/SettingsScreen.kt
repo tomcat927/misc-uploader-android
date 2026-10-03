@@ -37,14 +37,14 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 /**
  * 设置页(拍板对齐桌面端:无保存按钮,失焦即落盘;密码掩码回显 +「显示」;「连接」= 保存+测试一步)。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
+fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
 
     Scaffold(
