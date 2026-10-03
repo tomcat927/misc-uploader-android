@@ -1,6 +1,7 @@
 package com.tomcat927.miscuploader.data
 
 import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
 import dagger.hilt.android.qualifiers.ApplicationContext
