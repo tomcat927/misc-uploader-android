@@ -259,18 +259,15 @@ private fun BrowserPane(
 
         Box(Modifier.weight(1f)) {
             when {
-                selectionMode && side == Side.LEFT ->
-                    SelectableFileList(state, selected, onNavigate, onNavigateUp, onItemToggleSelect)
-
                 isFocused -> FocusedFileList(
                     state, breadcrumb.size > 1, onNavigate, onNavigateUp,
-                    onItemLongPress = onItemLongPress, selectionMode = false, selected = emptySet(),
+                    onItemLongPress = onItemLongPress, selectionMode = selectionMode, selected = selected,
                     onItemToggleSelect = onItemToggleSelect,
                 )
 
                 else -> CompactFileList(
                     state, breadcrumb.size > 1, onNavigate, onNavigateUp,
-                    onItemLongPress = onItemLongPress, selectionMode = false, selected = emptySet(),
+                    onItemLongPress = onItemLongPress, selectionMode = selectionMode, selected = selected,
                     onItemToggleSelect = onItemToggleSelect, selectionEnabled = side == Side.LEFT,
                 )
             }
@@ -334,7 +331,7 @@ private fun FocusedFileList(
         LazyColumn(Modifier.fillMaxSize()) {
             if (hasParent && !selectionMode) {
                 item(key = "..") {
-                    FileRow(FileItem("..", true, 0, ""), selected = false, selectionMode = false) { onNavigateUp() }
+                    FileRow(FileItem("..", true, 0, ""), selected = false, selectionMode = false, onOpen = { onNavigateUp() })
                 }
             }
             items(entries, key = { it.name }) { item ->
@@ -374,7 +371,7 @@ private fun CompactFileList(
         ) {
             if (hasParent && !selectionMode) {
                 item(key = "..", span = { GridItemSpan(2) }) {
-                    FileRow(FileItem("..", true, 0, ""), selected = false, selectionMode = false) { onNavigateUp() }
+                    FileRow(FileItem("..", true, 0, ""), selected = false, selectionMode = false, onOpen = { onNavigateUp() })
                 }
             }
             items(entries, key = { it.name }) { item ->

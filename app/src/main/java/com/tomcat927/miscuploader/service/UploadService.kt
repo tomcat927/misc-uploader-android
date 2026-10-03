@@ -74,7 +74,7 @@ class UploadService : Service() {
     }
 
     private suspend fun workerLoop() {
-        while (isActive) {
+        while (serviceScope.isActive) {
             val item = claimMutex.withLock { repository.claimNext() } ?: break
             process(item)
         }

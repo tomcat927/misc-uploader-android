@@ -32,9 +32,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tomcat927.miscuploader.data.UploadRepository
 import com.tomcat927.miscuploader.data.db.UploadItemEntity
 import com.tomcat927.miscuploader.data.db.UploadState
@@ -69,7 +69,7 @@ class QueueViewModel @Inject constructor(
 }
 
 @Composable
-fun QueueScreen(viewModel: QueueViewModel = hiltViewModel()) {
+fun QueueScreen(viewModel: QueueViewModel = viewModel()) {
     val items by viewModel.items.collectAsState()
 
     Column(Modifier.fillMaxSize()) {
