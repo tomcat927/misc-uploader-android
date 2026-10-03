@@ -1,0 +1,6 @@
+// 本机零环境:构建全在 GitHub Actions(.github/workflows/release.yml)
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.kotlin.android) apply false
+    alias(libs.plugins.kotlin.compose) apply false
+}

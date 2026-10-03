@@ -1,0 +1,152 @@
+name: Build & Release
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  APP_VERSION: '0.1.0'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle (caching)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Generate version info
+        id: version
+        run: |
+          export TZ=Asia/Shanghai
+          BUILD_TIME=$(date +%Y%m%d%H%M%S)
+          VERSION_CODE=$(date +%s)
+          echo "code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+          echo "version_name=${APP_VERSION}-${BUILD_TIME}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${APP_VERSION}-${BUILD_TIME}" >> "$GITHUB_OUTPUT"
+          echo "Generated v${APP_VERSION}-${BUILD_TIME} (versionCode: ${VERSION_CODE})"
+
+      - name: Decode signing keystore
+        id: keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PATH: ${{ runner.temp }}/misc-uploader.jks
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "::warning::未配置 ANDROID_KEYSTORE_BASE64，本次 APK 使用 debug 签名（可安装可测试，与正式签名版不能互相覆盖安装）"
+            echo "path=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          echo "path=$KEYSTORE_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Quality gate (compile + unit tests)
+        env:
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+        run: ./gradlew --no-daemon :app:compileReleaseKotlin :app:testDebugUnitTest --stacktrace
+
+      - name: Build APK
+        env:
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          ANDROID_KEYSTORE_PATH: ${{ steps.keystore.outputs.path }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon :app:assembleRelease --stacktrace
+
+      - name: Prepare release assets
+        id: assets
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION_NAME: ${{ steps.version.outputs.version_name }}
+        run: |
+          APK_NAME="misc-uploader-${TAG}.apk"
+          CHECKSUM_NAME="${APK_NAME}.sha256"
+          cp app/build/outputs/apk/release/app-release.apk "$APK_NAME"
+          sha256sum "$APK_NAME" > "$CHECKSUM_NAME"
+
+          GITHUB_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${APK_NAME}"
+          PROXY_URL="https://gh-proxy.com/${GITHUB_URL}"
+
+          cat > latest.json <<EOF
+          {
+            "tag_name": "${TAG}",
+            "version_display": "${VERSION_NAME}",
+            "apk": "${PROXY_URL}",
+            "github_apk": "${GITHUB_URL}",
+            "apk_sha256": "${PROXY_URL}.sha256",
+            "github_apk_sha256": "${GITHUB_URL}.sha256",
+            "release_url": "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          }
+          EOF
+          echo "apk=${APK_NAME}" >> "$GITHUB_OUTPUT"
+          echo "checksum=${CHECKSUM_NAME}" >> "$GITHUB_OUTPUT"
+          echo "github_url=${GITHUB_URL}" >> "$GITHUB_OUTPUT"
+          echo "proxy_url=${PROXY_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          APK_NAME: ${{ steps.assets.outputs.apk }}
+          CHECKSUM_NAME: ${{ steps.assets.outputs.checksum }}
+          PROXY_URL: ${{ steps.assets.outputs.proxy_url }}
+          GITHUB_URL: ${{ steps.assets.outputs.github_url }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+
+          cat > release-notes.md <<EOF
+          ## 版本 ${TAG}
+
+          Android APK，GitHub Actions 构建。
+
+          ## 下载
+
+          - [国内加速下载](${PROXY_URL})
+          - [GitHub 原始下载](${GITHUB_URL})
+
+          ## 校验
+
+          - SHA-256：见 \`${CHECKSUM_NAME}\`
+          EOF
+
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            "$APK_NAME" "$CHECKSUM_NAME" latest.json
+
+      - name: Cleanup old releases (keep 10)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mapfile -t RELEASES < <(gh release list --limit 100 --json tagName,createdAt --jq '.[] | "\(.createdAt) \(.tagName)"' | sort -r)
+          TOTAL=${#RELEASES[@]}
+          echo "Found $TOTAL releases; keeping 10"
+          for ((i=10; i<TOTAL; i++)); do
+            OLD_TAG=$(echo "${RELEASES[$i]}" | awk '{print $2}')
+            gh release delete "$OLD_TAG" --yes --cleanup-tag || echo "Failed to delete ${OLD_TAG}"
+          done
