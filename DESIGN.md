@@ -18,9 +18,13 @@
 | 接口缝 | `RemoteStorage` 接口（login/list/mkdir/upload），V1 仅 OpenListRestClient 一个实现（迁离 alist 系时补 WebDAV 实现） |
 | 上传队列 | 前台服务（dataSync 类型）+ **Room 唯一真相源**（UI 与服务同进程，靠 Room Flow 对齐）；状态机沿用桌面端 hashing/pending/uploading/cooldown/done/skipped/failed + finished_at；并发/重试退避 2s/8s/30s 可配 |
 | 进度 | 客户端字节计数（ProgressRequestBody），协议无关 |
-| 网络 | OkHttp 5.x + kotlinx.serialization；不上 Retrofit（全 app 4 个端点） |
+| 网络 | kotlinx.serialization 1.7.3 + **OkHttp 4.12.0**（M1 实钉；原拍板写 5.x，stable 坐标未验证，API 同构，升级留 V1.1 评估）；不上 Retrofit（全 app 4 个端点） |
 | DI | Hilt（KSP） |
 | 持久化 | Room（队列+历史）+ Preferences DataStore（设置）；密码 = Keystore AES-GCM 包 DataStore（androidx security-crypto 已废弃不用） |
+| 密码框语义（移动端适配，M1） | 输入框留空 = 沿用已存密码（placeholder 掩码提示，对齐桌面端哨兵语义）；「显示」= 取回真实密码进输入框，「隐藏」= 清空回到沿用态；显式清空后保存 = 删除已存密码 |
+| 地址归一化（M1） | 无 scheme 自动补 https://、去尾部斜杠（桌面端要求手输完整 URL，移动端放宽） |
+| 连接测试（M1） | 「连接」= 保存 + login + list("/") 一步，已连接卡片显示根目录项数；启动时配置齐全自动连接（MiscApp → ConnectionManager） |
+| 协议回归测试（M1） | `OpenListClientTest`（MockWebServer，9 例）：token 透传 / 401 重登一次 / 防无限循环 / File-Path 编码还原 / 流式+进度 / Overwrite 头 / 200+HTML 假成功防御 / 403 同名闸门——质量门从空转变为真门 |
 | 本地文件 | `MANAGE_EXTERNAL_STORAGE` + `java.io.File`（自用侧载，不上架） |
 | 双窗口交互 | 借 SplitLanzou 的交互模型与参数：聚焦模型、展开动画 400ms、非聚焦侧两列瀑布流、底部 12sp 操作条；**借参数不借实现**（其代码 Apache-2.0，选择性借用需署名） |
 | 工程纪律 | **零本地环境**：不装 Android SDK/Gradle/Studio，构建签名发布全在 GitHub Actions，push 后监听到 completed；诊断下沉（设置→调试日志页，V1 必做）；adb 仅采集日志 |
@@ -49,7 +53,7 @@ SHA-256 去重（本地历史：sha → 最新远程路径）、`auto/YYYY/MM` �
 ## 里程碑
 
 - **M0 CI 闭环**：仓库 + 骨架 + push→APK→Release 跑通（本提交）
-- M1 协议层 + 设置页（连接测试闭环）
+- **M1 协议层 + 设置页（本提交）**：`RemoteStorage` 接口缝 + `OpenListClient` + 设置页（失焦保存/掩码/连接）+ 协议回归测试
 - M2 双栏 UI（本地浏览 + 远程浏览 + 聚焦/展开 + 面包屑）
 - M3 多选 + 上传队列 + 前台服务 + 进度（MVP 可用）
 - M4 V1.1（去重 / 归类 / 历史）

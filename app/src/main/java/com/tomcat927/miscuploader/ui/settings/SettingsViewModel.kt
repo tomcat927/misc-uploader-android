@@ -1,0 +1,145 @@
+package com.tomcat927.miscuploader.ui.settings
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.tomcat927.miscuploader.data.ConnectionManager
+import com.tomcat927.miscuploader.data.ServerConfig
+import com.tomcat927.miscuploader.data.SettingsRepository
+import dagger.hilt.android.lifecycle.HiltViewModel
+import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+data class SettingsUiState(
+    val url: String = "",
+    val username: String = "",
+    /** 密码输入框实际内容;空 = 沿用已存(与桌面端哨兵语义一致) */
+    val passwordInput: String = "",
+    val hasStoredPassword: Boolean = false,
+    val revealing: Boolean = false,
+    val validationHint: String? = null,
+    val connecting: Boolean = false,
+    val connected: Boolean = false,
+    val connectionMessage: String? = null,
+    val connectedRootCount: Int? = null,
+)
+
+@HiltViewModel
+class SettingsViewModel @Inject constructor(
+    private val settings: SettingsRepository,
+    private val connection: ConnectionManager,
+) : ViewModel() {
+
+    private val _uiState = MutableStateFlow(SettingsUiState())
+    val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+
+    /** 是否有未落盘的编辑(失焦提交用,避免首次进入空表单误报) */
+    private var dirty = false
+
+    init {
+        viewModelScope.launch {
+            val stored = settings.loadOnce()
+            _uiState.update {
+                it.copy(url = stored.baseUrl, username = stored.username, hasStoredPassword = stored.hasPassword)
+            }
+        }
+        viewModelScope.launch {
+            connection.state.collect { s ->
+                _uiState.update {
+                    when (s) {
+                        is ConnectionManager.State.Idle ->
+                            it.copy(connecting = false, connected = false, connectionMessage = null, connectedRootCount = null)
+
+                        is ConnectionManager.State.Connecting ->
+                            it.copy(connecting = true, connected = false, connectionMessage = null)
+
+                        is ConnectionManager.State.Connected ->
+                            it.copy(connecting = false, connected = true, connectionMessage = null, connectedRootCount = s.rootItemCount)
+
+                        is ConnectionManager.State.Failed ->
+                            it.copy(connecting = false, connected = false, connectionMessage = s.message, connectedRootCount = null)
+                    }
+                }
+            }
+        }
+    }
+
+    fun onUrlChange(value: String) {
+        dirty = true
+        _uiState.update { it.copy(url = value, validationHint = null) }
+    }
+
+    fun onUsernameChange(value: String) {
+        dirty = true
+        _uiState.update { it.copy(username = value, validationHint = null) }
+    }
+
+    fun onPasswordChange(value: String) {
+        dirty = true
+        _uiState.update { it.copy(passwordInput = value, validationHint = null) }
+    }
+
+    /** 字段失焦即落盘(拍板对齐桌面端:无保存按钮) */
+    fun commitFields() {
+        if (!dirty) return
+        dirty = false
+        val s = _uiState.value
+        if (s.url.isBlank() && s.username.isBlank() && s.passwordInput.isEmpty()) return
+        viewModelScope.launch {
+            val ok = settings.save(s.url, s.username, password = s.passwordInput.ifEmpty { null })
+            if (!ok) {
+                _uiState.update { it.copy(validationHint = "服务器地址与用户名不能为空，本次修改未保存") }
+            }
+        }
+    }
+
+    /** 「连接」= 保存 + 连接一步(拍板:连接本身就是最好的测试) */
+    fun connect() {
+        val s = _uiState.value
+        viewModelScope.launch {
+            val password = s.passwordInput.ifEmpty { null }
+            if (s.url.isBlank() || s.username.isBlank()) {
+                _uiState.update { it.copy(validationHint = "服务器地址与用户名不能为空") }
+                return@launch
+            }
+            if (password == null && !s.hasStoredPassword) {
+                _uiState.update { it.copy(validationHint = "请输入密码") }
+                return@launch
+            }
+            val saved = settings.save(s.url, s.username, password)
+            if (!saved) {
+                _uiState.update { it.copy(validationHint = "服务器地址与用户名不能为空") }
+                return@launch
+            }
+            dirty = false
+            val config = settings.loadDecryptedOnce()
+            if (config == null) {
+                _uiState.update { it.copy(validationHint = "配置不完整（缺少已保存密码）") }
+                return@launch
+            }
+            connection.connect(normalize(config))
+        }
+    }
+
+    /** 「显示」:按需取回真实密码;「隐藏」回到沿用态(输入框清空 = 沿用已存) */
+    fun toggleReveal() {
+        val s = _uiState.value
+        if (!s.revealing) {
+            if (!s.hasStoredPassword) return
+            viewModelScope.launch {
+                val real = settings.revealPassword()
+                if (real != null) {
+                    _uiState.update { it.copy(revealing = true, passwordInput = real) }
+                }
+            }
+        } else {
+            _uiState.update { it.copy(revealing = false, passwordInput = "") }
+        }
+    }
+
+    private fun normalize(config: ServerConfig): ServerConfig =
+        config.copy(baseUrl = SettingsRepository.normalizeBaseUrl(config.baseUrl))
+}
