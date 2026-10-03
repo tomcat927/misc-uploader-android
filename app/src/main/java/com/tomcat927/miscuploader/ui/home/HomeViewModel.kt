@@ -64,7 +64,7 @@ class HomeViewModel @Inject constructor(
                         _right.update { it.copy(loading = false, error = "未连接：${state.message}") }
 
                     ConnectionManager.State.Connecting,
-                    ConnectionManager.State.Idle -> Unit,
+                    ConnectionManager.State.Idle -> Unit
                 }
             }
         }
