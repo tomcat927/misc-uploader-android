@@ -28,6 +28,12 @@ class MiscApp : Application() {
         }
         // 队列续跑:有在途任务则拉起前台服务(服务启动时重置 uploading/cooldown → pending)
         uploadRepository.resumeIfPending()
+        // 连接成功后恢复可能因"未连接"退回的队列(如分享先于连接到达)
+        appScope.launch {
+            connectionManager.state.collect { state ->
+                if (state is ConnectionManager.State.Connected) uploadRepository.resumeIfPending()
+            }
+        }
     }
 
     private fun ensureUploadChannel() {

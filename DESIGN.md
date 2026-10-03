@@ -35,6 +35,8 @@
 | 上传行为（M3） | 流式 PUT（内存恒定）；overwrite=true（M3 桌面端同语义，403 同名闸门留给 V1.1 去重）；文件夹递归展开入队保留内部结构（拍板沿用桌面端）；逐级 mkdir best-effort 忽略"已存在"错误（对齐 misc-sync.py）；上传成功后对目标目录 list(refresh=true) 触发 OpenList 增量索引 |
 | 多选（M3） | 仅本地侧可选（长按进入、单击切换、checkbox）；换目录即清空（不跨目录保留）；上传前确认框明示目标完整路径（对齐桌面端"来源去向可见"） |
 | M3 已知边界 | 分享接收（ACTION_SEND）移至 M4；诊断页（日志/ApplicationExitInfo）随 M4 一起；DAO 无单元测试（需 Robolectric/仪器，V1.1 评估）；Android 13+ 通知权限未主动请求（前台服务仍运行，可系统设置授予） |
+| 分享接收（M4） | SEND/SEND_MULTIPLE + `*/*`，MainActivity singleTask + onNewIntent；**content:// 先拷贝到 app cache 再按文件入队**（队列/重试逻辑不变；成功后的孤儿缓存由启动清理回收）；目标统一 = 仓库根目录 `/`（默认目录设置项留 V1.1）；未连接时任务排队，连接成功自动恢复 |
+| 诊断（M4） | **诊断能力下沉**（零本地环境的排查窗口）：AppLogger 文件 ring 日志（filesDir/diagnostics/upload.log，256KB 截半，只存本机）打点入队/上传/失败/重试/连接；`ApplicationExitInfo` 最近 5 次退出原因（Android 11+，识别厂商杀后台）；设置页底部诊断卡展开查看 + 复制全部 |
 | 本地文件 | `MANAGE_EXTERNAL_STORAGE` + `java.io.File`（自用侧载，不上架） |
 | 双窗口交互 | 借 SplitLanzou 的交互模型与参数：聚焦模型、展开动画 400ms、非聚焦侧两列瀑布流、底部 12sp 操作条；**借参数不借实现**（其代码 Apache-2.0，选择性借用需署名） |
 | 工程纪律 | **零本地环境**：不装 Android SDK/Gradle/Studio，构建签名发布全在 GitHub Actions，push 后监听到 completed；诊断下沉（设置→调试日志页，V1 必做）；adb 仅采集日志 |
@@ -65,7 +67,8 @@ SHA-256 去重（本地历史：sha → 最新远程路径）、`auto/YYYY/MM` �
 - **M0 CI 闭环**：仓库 + 骨架 + push→APK→Release 跑通（本提交）
 - M1 协议层 + 设置页 ✅（2026-10-03）
 - M2 双栏 UI ✅（2026-10-03）
-- **M3 上传队列（本提交）**：多选 + Room 队列 + dataSync 前台服务 + 内联进度 + 重试/清除 → MVP 可用
+- M3 上传队列 ✅（2026-10-03）——MVP 可用
+- **M4 分享接收 + 诊断（本提交）→ V1 里程碑全部完成**；V1.1 候选：SHA-256 去重 / auto 归类 / 上传历史 / 并发与重试设置项 / 仅 Wi-Fi / 通知权限运行时请求 / R8 / OkHttp 5.x 评估 / Room DAO 测试
 - M3 多选 + 上传队列 + 前台服务 + 进度（MVP 可用）
 - M4 V1.1（去重 / 归类 / 历史）
 

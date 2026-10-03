@@ -1,17 +1,28 @@
 package com.tomcat927.miscuploader.ui.settings
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tomcat927.miscuploader.data.AppLogger
 import com.tomcat927.miscuploader.data.ConnectionManager
 import com.tomcat927.miscuploader.data.ServerConfig
 import com.tomcat927.miscuploader.data.SettingsRepository
+import com.tomcat927.miscuploader.data.SystemDiagnostics
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+data class DiagnosticsUiState(
+    val expanded: Boolean = false,
+    val loading: Boolean = false,
+    val logText: String = "",
+    val exitText: String = "",
+)
 
 data class SettingsUiState(
     val url: String = "",
@@ -25,12 +36,15 @@ data class SettingsUiState(
     val connected: Boolean = false,
     val connectionMessage: String? = null,
     val connectedRootCount: Int? = null,
+    val diagnostics: DiagnosticsUiState = DiagnosticsUiState(),
 )
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val settings: SettingsRepository,
     private val connection: ConnectionManager,
+    private val logger: AppLogger,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -142,4 +156,23 @@ class SettingsViewModel @Inject constructor(
 
     private fun normalize(config: ServerConfig): ServerConfig =
         config.copy(baseUrl = SettingsRepository.normalizeBaseUrl(config.baseUrl))
+
+    // ---- 诊断(M4:零本地环境下的排查窗口) ----
+
+    fun toggleDiagnostics() {
+        val expanded = !_uiState.value.diagnostics.expanded
+        _uiState.update { it.copy(diagnostics = it.diagnostics.copy(expanded = expanded)) }
+        if (expanded) loadDiagnostics()
+    }
+
+    fun loadDiagnostics() {
+        _uiState.update { it.copy(diagnostics = it.diagnostics.copy(loading = true)) }
+        viewModelScope.launch {
+            val logText = logger.readRecent()
+            val exitText = SystemDiagnostics.exitInfo(context)
+            _uiState.update {
+                it.copy(diagnostics = it.diagnostics.copy(loading = false, logText = logText, exitText = exitText))
+            }
+        }
+    }
 }

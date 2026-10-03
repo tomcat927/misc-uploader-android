@@ -46,6 +46,8 @@ class UploadService : Service() {
 
     @Inject lateinit var connectionManager: ConnectionManager
 
+    @Inject lateinit var logger: com.tomcat927.miscuploader.data.AppLogger
+
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val claimMutex = Mutex()
     private val workers = 2
@@ -85,15 +87,18 @@ class UploadService : Service() {
         val client = connectionManager.clientOrNull()
         if (client == null) {
             // 未连接:退回 pending 停队列;连接后从队列页/启动恢复
+            logger.log("upload", "未连接，「${item.displayName}」退回队列")
             repository.requeue(item.id, item.retries)
             tryStop()
             return
         }
         val file = File(item.localPath)
         if (!file.isFile) {
+            logger.log("upload", "跳过（本地文件不存在）：${item.localPath}")
             repository.markSkipped(item.id, "本地文件不存在：${item.localPath}")
             return
         }
+        logger.log("upload", "开始 ${item.displayName}（${file.length()} B → ${item.remotePath}）")
         try {
             var lastPost = 0L
             client.upload(file, item.remotePath, overwrite = true) { sent, total ->
@@ -105,6 +110,7 @@ class UploadService : Service() {
                 }
             }
             repository.markDone(item.id)
+            logger.log("upload", "完成 ${item.displayName}")
             refreshRemoteDir(item.remoteDir)
         } catch (e: OpenListApiException) {
             handleFailure(item, e.message ?: "请求失败")
@@ -117,10 +123,12 @@ class UploadService : Service() {
         val retries = item.retries + 1
         if (retries <= backoffMillis.size) {
             val wait = backoffMillis[retries - 1]
+            logger.log("upload", "失败 ${item.displayName}：$message（${retries}/${backoffMillis.size}，${wait / 1000}s 后重试）")
             repository.enterCooldown(item.id, "$message（${retries}/${backoffMillis.size} 次重试，${wait / 1000}s 后重试）")
             delay(wait)
             repository.requeue(item.id, retries)
         } else {
+            logger.log("upload", "最终失败 ${item.displayName}：$message")
             repository.markFailed(item.id, message)
         }
     }

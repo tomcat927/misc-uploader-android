@@ -52,4 +52,7 @@ interface UploadDao {
 
     @Query("SELECT COUNT(*) FROM upload_items WHERE state IN ('pending','uploading','cooldown')")
     suspend fun activeCount(): Int
+
+    @Query("SELECT * FROM upload_items WHERE state IN ('pending','uploading','cooldown')")
+    suspend fun inFlight(): List<UploadItemEntity>
 }

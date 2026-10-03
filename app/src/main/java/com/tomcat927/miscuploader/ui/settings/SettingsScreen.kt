@@ -120,6 +120,12 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
             }
 
             ConnectionStatusCard(state)
+
+            DiagnosticsCard(
+                state = state.diagnostics,
+                onToggle = viewModel::toggleDiagnostics,
+                onRefresh = viewModel::loadDiagnostics,
+            )
         }
     }
 }

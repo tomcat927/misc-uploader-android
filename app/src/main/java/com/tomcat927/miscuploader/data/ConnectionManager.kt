@@ -19,6 +19,7 @@ import okhttp3.OkHttpClient
 class ConnectionManager @Inject constructor(
     private val settings: SettingsRepository,
     private val okHttpClient: OkHttpClient,
+    private val logger: AppLogger,
 ) {
 
     sealed interface State {
@@ -46,11 +47,15 @@ class ConnectionManager @Inject constructor(
             client.login()
             val entries = client.list("/")
             _state.value = State.Connected(client, entries.size)
+            logger.log("connect", "已连接 ${config.baseUrl}（根目录 ${entries.size} 项）")
         } catch (e: OpenListApiException) {
+            logger.log("connect", "连接失败：${e.message}")
             _state.value = State.Failed(e.message ?: "请求失败")
         } catch (e: IOException) {
+            logger.log("connect", "连接失败：网络错误 ${e.message}")
             _state.value = State.Failed("网络错误：${e.message ?: "无法连接"}")
         } catch (e: Exception) {
+            logger.log("connect", "连接失败：${e.message}")
             _state.value = State.Failed(e.message ?: e.javaClass.simpleName)
         }
     }
