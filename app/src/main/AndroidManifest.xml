@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 网络访问:REST 登录/列目录/上传全靠它;缺了会报 "socket failed: EPERM"(坑 4) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- 拍板:自用侧载,双栏文件管理器用全盘访问(不上架,无 Play 审核问题) -->
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
