@@ -28,6 +28,8 @@ misc-uploader-android：杂物数字仓库（tianyi-misc-repo，私有仓）的 
 ## 已踩过的坑（随迭代补，别再踩）
 
 1. **kotlinx.serialization 默认 `encodeDefaults=false`**：等于默认值的字段被静默省略——`FsListRequest` 的 `per_page=1000`/`refresh=false` 没发出去，服务端回落默认页大小 30，大目录被截断。Json 实例必须配 `encodeDefaults=true`。（OpenListClientTest 抓到的，协议回归门的价值所在；2026-10-03）
+2. **`when` 分支不支持尾逗号**（其他逗号列表支持）：`-> Unit,` 会在逗号位置报 "Expecting a when-condition"。（2026-10-03）
+3. **Compose Lazy 列表的 `items` 重载解析**：`androidx.compose.foundation.lazy.items`（List 重载）必须显式导入，否则只匹配成员 `items(count: Int)`，报 "List but Int expected"；且内容 lambda 的参数不要命名为 `items`（值遮蔽函数名后仍按 count 重载解析）。（2026-10-03）
 
 ## 凭据与安全规约（不可妥协）
 
