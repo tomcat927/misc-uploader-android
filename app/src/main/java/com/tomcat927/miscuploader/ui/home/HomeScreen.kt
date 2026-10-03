@@ -263,14 +263,14 @@ private fun FocusedFileList(
     onNavigate: (String) -> Unit,
     onNavigateUp: () -> Unit,
 ) {
-    PaneContent(state) { items ->
+    PaneContent(state) { entries ->
         LazyColumn(Modifier.fillMaxSize()) {
             if (hasParent) {
                 item(key = "..") {
-                    FileRow(FileItem("..", true, 0, ""), onOpen = onNavigateUp)
+                    FileRow(FileItem("..", true, 0, "")) { onNavigateUp() }
                 }
             }
-            items(items, key = { it.name }) { item ->
+            items(entries, key = { it.name }) { item ->
                 FileRow(item) { onOpen ->
                     if (onOpen.isDir) onNavigate(onOpen.name)
                     // 文件点击:M3 接入多选/上传
@@ -288,17 +288,17 @@ private fun CompactFileList(
     onNavigate: (String) -> Unit,
     onNavigateUp: () -> Unit,
 ) {
-    PaneContent(state) { items ->
+    PaneContent(state) { entries ->
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
             modifier = Modifier.fillMaxSize(),
         ) {
             if (hasParent) {
                 item(key = "..", span = { GridItemSpan(2) }) {
-                    FileRow(FileItem("..", true, 0, ""), onOpen = onNavigateUp)
+                    FileRow(FileItem("..", true, 0, "")) { onNavigateUp() }
                 }
             }
-            items(items, key = { it.name }) { item ->
+            items(entries, key = { it.name }) { item ->
                 CompactFileCell(item) {
                     if (item.isDir) onNavigate(item.name)
                 }
@@ -452,7 +452,7 @@ private fun ButtonRow(context: android.content.Context) {
 }
 
 @Composable
-private fun EdgeHandle(alignment: Alignment, icon: ImageVector, onClick: () -> Unit) {
+private fun BoxScope.EdgeHandle(alignment: Alignment, icon: ImageVector, onClick: () -> Unit) {
     val shape = when (alignment) {
         Alignment.CenterEnd -> RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
         else -> RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
