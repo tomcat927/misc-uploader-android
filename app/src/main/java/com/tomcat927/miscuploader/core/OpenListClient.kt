@@ -103,6 +103,16 @@ class OpenListClient(
         requireCode(body)
     }
 
+    override suspend fun mkdirp(remotePath: String) {
+        val parent = remotePath.substringBeforeLast('/', missingDelimiterValue = "/")
+        if (parent.isEmpty() || parent == "/") return
+        var cur = ""
+        for (seg in parent.trim('/').split('/').filter { it.isNotEmpty() }) {
+            cur = "$cur/$seg"
+            runCatching { mkdir(cur) } // 已存在等错误一律忽略(对齐 misc-sync.py)
+        }
+    }
+
     override suspend fun upload(
         file: File,
         remotePath: String,

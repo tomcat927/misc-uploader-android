@@ -51,10 +51,10 @@ class MainActivity : ComponentActivity() {
         if (uris.isEmpty()) return
 
         lifecycleScope.launch {
-            val count = uploadRepository.enqueueFromShare(uris)
+            val result = uploadRepository.enqueueFromShare(uris)
             Toast.makeText(
                 this@MainActivity,
-                if (count > 0) "已加入上传队列 $count 项（目标：仓库根目录）" else "分享内容无法读取",
+                if (result.count > 0) "已加入上传队列 ${result.count} 项 → ${result.target}" else "分享内容无法读取",
                 Toast.LENGTH_SHORT,
             ).show()
         }

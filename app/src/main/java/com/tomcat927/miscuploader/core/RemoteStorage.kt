@@ -21,6 +21,12 @@ interface RemoteStorage {
     suspend fun mkdir(path: String)
 
     /**
+     * 逐级确保父目录存在(忽略"已存在"类错误,misc-sync.py 同款语义;
+     * 真正无法创建时由后续上传报错走失败路径)。
+     */
+    suspend fun mkdirp(remotePath: String)
+
+    /**
      * 流式上传,内存恒定。
      * @param remotePath 目标完整路径(以 "/" 开头,含文件名)
      * @param overwrite false 时同名存在 → OpenListApiException(403),由调用方当"已存在"闸门

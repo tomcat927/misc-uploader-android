@@ -18,6 +18,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -38,6 +39,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tomcat927.miscuploader.data.UploadMode
 
 /**
  * 设置页(拍板对齐桌面端:无保存按钮,失焦即落盘;密码掩码回显 +「显示」;「连接」= 保存+测试一步)。
@@ -46,6 +48,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 @Composable
 fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
+    val uploadMode by viewModel.uploadMode.collectAsState()
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("设置") }) },
@@ -121,10 +124,45 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
 
             ConnectionStatusCard(state)
 
+            UploadModeCard(
+                mode = uploadMode,
+                onSelect = viewModel::setUploadMode,
+            )
+
             DiagnosticsCard(
                 state = state.diagnostics,
                 onToggle = viewModel::toggleDiagnostics,
                 onRefresh = viewModel::loadDiagnostics,
+            )
+        }
+    }
+}
+
+/** 上传模式(拍板 A2,对齐桌面端两种模式) */
+@Composable
+private fun UploadModeCard(mode: UploadMode, onSelect: (UploadMode) -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("上传模式", style = MaterialTheme.typography.titleSmall)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = mode == UploadMode.MANUAL,
+                    onClick = { onSelect(UploadMode.MANUAL) },
+                    label = { Text(UploadMode.MANUAL.label) },
+                )
+                FilterChip(
+                    selected = mode == UploadMode.AUTO_DATE,
+                    onClick = { onSelect(UploadMode.AUTO_DATE) },
+                    label = { Text(UploadMode.AUTO_DATE.label) },
+                )
+            }
+            Text(
+                when (mode) {
+                    UploadMode.MANUAL -> "上传到「文件」页右侧当前所在目录"
+                    UploadMode.AUTO_DATE -> "按每个文件的修改时间自动归入 auto/年/月（分享接收同样生效）"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

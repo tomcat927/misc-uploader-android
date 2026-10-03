@@ -29,26 +29,27 @@ class UploadRepository @Inject constructor(
     private val dao: UploadDao,
     private val appScope: CoroutineScope,
     private val logger: AppLogger,
+    private val settings: SettingsRepository,
 ) {
 
     val items: Flow<List<UploadItemEntity>> = dao.observeAll()
 
     /**
-     * 入队并拉起前台服务。
-     * @param files (本地文件, 相对 remoteDir 的相对路径) 对;文件夹结构在入队侧递归展开(拍板沿用桌面端)
+     * 入队并拉起前台服务(拍板 A2:目标目录在入队侧规划——手动模式 = 所选目录,
+     * 自动模式 = 按各文件 mtime 的 auto/yyyy/MM;文件夹结构由调用方展开保留)。
      */
-    fun enqueue(files: List<Pair<File, String>>, remoteDir: String) {
-        if (files.isEmpty()) return
+    fun enqueue(tasks: List<UploadTask>) {
+        if (tasks.isEmpty()) return
         appScope.launch {
             val now = System.currentTimeMillis()
-            val items = files.mapNotNull { (file, rel) ->
-                if (!file.isFile) return@mapNotNull null
+            val items = tasks.mapNotNull { t ->
+                if (!t.file.isFile) return@mapNotNull null
                 UploadItemEntity(
-                    localPath = file.absolutePath,
-                    displayName = file.name,
-                    size = file.length(),
-                    remoteDir = remoteDir,
-                    remotePath = if (remoteDir == "/") "/$rel" else "$remoteDir/$rel",
+                    localPath = t.file.absolutePath,
+                    displayName = t.file.name,
+                    size = t.file.length(),
+                    remoteDir = t.remoteDir,
+                    remotePath = UploadPlanning.joinRemotePath(t.remoteDir, t.rel),
                     state = UploadState.PENDING,
                     progress = 0,
                     enqueuedAt = now,
@@ -56,17 +57,26 @@ class UploadRepository @Inject constructor(
             }
             if (items.isEmpty()) return@launch
             dao.insertAll(items)
-            logger.log("queue", "入队 ${items.size} 项 → $remoteDir")
+            val dirs = tasks.map { it.remoteDir }.distinct()
+            val dirDesc = if (dirs.size <= 3) dirs.joinToString() else "${dirs.take(3).joinToString()} 等 ${dirs.size} 个目录"
+            logger.log("queue", "入队 ${items.size} 项 → $dirDesc")
             startService()
         }
     }
 
     /**
      * 分享接收(M4 拍板):content:// 先拷贝到 app cache 再按文件入队(队列/重试逻辑不变);
-     * 目标统一为仓库根目录 "/";上传完成后由启动清理回收孤儿缓存。
-     * @return 实际入队数
+     * 目标由上传模式决定——自动模式按分享时刻归 auto/yyyy/MM,手动模式为仓库根目录 "/"。
+     * 上传完成后由启动清理回收孤儿缓存。
+     * @return 实际入队数与目标描述
      */
-    suspend fun enqueueFromShare(uris: List<Uri>): Int = withContext(Dispatchers.IO) {
+    suspend fun enqueueFromShare(uris: List<Uri>): ShareEnqueue = withContext(Dispatchers.IO) {
+        val mode = settings.loadUploadModeOnce()
+        val target = if (mode == UploadMode.AUTO_DATE) {
+            UploadPlanning.autoDirFor(System.currentTimeMillis())
+        } else {
+            "/"
+        }
         val now = System.currentTimeMillis()
         val items = uris.mapNotNull { uri ->
             runCatching {
@@ -85,8 +95,8 @@ class UploadRepository @Inject constructor(
                     localPath = dest.absolutePath,
                     displayName = name,
                     size = dest.length(),
-                    remoteDir = "/",
-                    remotePath = "/$name",
+                    remoteDir = target,
+                    remotePath = UploadPlanning.joinRemotePath(target, name),
                     state = UploadState.PENDING,
                     progress = 0,
                     enqueuedAt = now,
@@ -95,10 +105,10 @@ class UploadRepository @Inject constructor(
         }
         if (items.isNotEmpty()) {
             dao.insertAll(items)
-            logger.log("queue", "分享入队 ${items.size} 项 → /")
+            logger.log("queue", "分享入队 ${items.size} 项 → $target")
             startService()
         }
-        items.size
+        ShareEnqueue(items.size, target)
     }
 
     /** 应用启动/连接成功时恢复:清理孤儿缓存;有在途任务则拉起服务(服务启动重置中断状态) */
@@ -183,3 +193,13 @@ class UploadRepository @Inject constructor(
         context.startForegroundService(Intent(context, UploadService::class.java))
     }
 }
+
+/** 单个上传任务:目标目录在入队侧规划(A2) */
+data class UploadTask(
+    val file: File,
+    val remoteDir: String,
+    val rel: String,
+)
+
+/** 分享接收结果 */
+data class ShareEnqueue(val count: Int, val target: String)

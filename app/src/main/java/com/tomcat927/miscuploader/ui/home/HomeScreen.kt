@@ -69,6 +69,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tomcat927.miscuploader.data.UploadMode
 
 /**
  * 双栏主界面(拍板借 SplitLanzou:触摸聚焦、聚焦侧单列/非聚焦侧两列、400ms 展开动画 + 边缘把手)。
@@ -82,6 +83,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val expanded by viewModel.expandedSide.collectAsState()
     val storageGranted by viewModel.storageGranted.collectAsState()
     val selectedLeft by viewModel.selectedLeft.collectAsState()
+    val uploadMode by viewModel.uploadMode.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var mkdirSide by remember { mutableStateOf<Side?>(null) }
     var uploadConfirm by remember { mutableStateOf(false) }
@@ -193,9 +195,14 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     }
 
     if (uploadConfirm && selectedLeft.isNotEmpty()) {
+        val autoMode = uploadMode == UploadMode.AUTO_DATE
         UploadConfirmDialog(
             count = selectedLeft.size,
-            targetPath = viewModel.breadcrumbOf(Side.RIGHT, right.path).joinToString("/"),
+            targetDesc = if (autoMode) {
+                "auto/年/月（按各文件修改时间自动归类）"
+            } else {
+                viewModel.breadcrumbOf(Side.RIGHT, right.path).joinToString("/")
+            },
             onConfirm = {
                 viewModel.uploadSelected()
                 uploadConfirm = false
@@ -597,12 +604,12 @@ private fun MkdirDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun UploadConfirmDialog(count: Int, targetPath: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+private fun UploadConfirmDialog(count: Int, targetDesc: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("上传") },
         text = {
-            Text("已选择 $count 个文件（文件夹按内部结构展开），将上传到：\n$targetPath")
+            Text("已选择 $count 个文件（文件夹按内部结构展开），将上传到：\n$targetDesc")
         },
         confirmButton = {
             TextButton(onClick = onConfirm) { Text("执行上传") }

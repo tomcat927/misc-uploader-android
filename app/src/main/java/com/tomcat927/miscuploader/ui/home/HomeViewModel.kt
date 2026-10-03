@@ -7,7 +7,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tomcat927.miscuploader.core.OpenListApiException
 import com.tomcat927.miscuploader.data.ConnectionManager
+import com.tomcat927.miscuploader.data.SettingsRepository
+import com.tomcat927.miscuploader.data.UploadMode
+import com.tomcat927.miscuploader.data.UploadPlanning
 import com.tomcat927.miscuploader.data.UploadRepository
+import com.tomcat927.miscuploader.data.UploadTask
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -19,8 +23,10 @@ import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -33,6 +39,7 @@ class HomeViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val connection: ConnectionManager,
     private val uploadRepository: UploadRepository,
+    private val settings: SettingsRepository,
 ) : ViewModel() {
 
     private val localRoot: String = Environment.getExternalStorageDirectory().absolutePath
@@ -60,6 +67,10 @@ class HomeViewModel @Inject constructor(
     val selectedLeft: StateFlow<Set<String>> = _selectedLeft.asStateFlow()
     val selectionMode: Boolean
         get() = _selectedLeft.value.isNotEmpty()
+
+    /** 上传模式(拍板 A2:确认框文案与目标规划用) */
+    val uploadMode: StateFlow<UploadMode> = settings.uploadModeFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UploadMode.MANUAL)
 
     init {
         recheckStoragePermission()
@@ -119,34 +130,46 @@ class HomeViewModel @Inject constructor(
         _selectedLeft.value = emptySet()
     }
 
-    /** 上传已选项到远程当前目录(拍板:文件夹递归展开保留内部结构;确认框在 UI 层) */
+    /** 上传已选项(拍板 A2:手动模式 → 远程当前目录;自动模式 → 按各文件 mtime 归 auto/yyyy/MM) */
     fun uploadSelected() {
-        val target = _right.value.path
         val selected = _selectedLeft.value
         if (selected.isEmpty()) return
         viewModelScope.launch {
+            val mode = settings.loadUploadModeOnce()
+            val manualTarget = _right.value.path
             val currentLocal = _left.value.path
-            val files = mutableListOf<Pair<File, String>>()
+            val tasks = mutableListOf<UploadTask>()
             selected.forEach { name ->
                 val f = File(joinPath(currentLocal, name))
                 when {
-                    f.isFile -> files += f to name
+                    f.isFile -> tasks += taskFor(f, name, mode, manualTarget)
                     f.isDirectory -> f.walkTopDown()
                         .filter { it.isFile }
                         .forEach { child ->
-                            files += child to child.path.removePrefix(currentLocal).trimStart('/')
+                            tasks += taskFor(child, child.path.removePrefix(currentLocal).trimStart('/'), mode, manualTarget)
                         }
                 }
             }
-            if (files.isEmpty()) {
+            if (tasks.isEmpty()) {
                 events.emit("没有可上传的文件")
                 return@launch
             }
-            uploadRepository.enqueue(files, target)
+            uploadRepository.enqueue(tasks)
             _selectedLeft.value = emptySet()
-            events.emit("已加入队列：${files.size} 个文件 → ${target.ifEmpty { "/" }}")
+            events.emit("已加入队列：${tasks.size} 个文件")
         }
     }
+
+    private fun taskFor(file: File, rel: String, mode: UploadMode, manualTarget: String): UploadTask =
+        UploadTask(
+            file = file,
+            remoteDir = if (mode == UploadMode.AUTO_DATE) {
+                UploadPlanning.autoDirFor(file.lastModified())
+            } else {
+                manualTarget
+            },
+            rel = rel,
+        )
 
     // ---- 导航 ----
 

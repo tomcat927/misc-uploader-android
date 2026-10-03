@@ -8,12 +8,15 @@ import com.tomcat927.miscuploader.data.ConnectionManager
 import com.tomcat927.miscuploader.data.ServerConfig
 import com.tomcat927.miscuploader.data.SettingsRepository
 import com.tomcat927.miscuploader.data.SystemDiagnostics
+import com.tomcat927.miscuploader.data.UploadMode
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -156,6 +159,15 @@ class SettingsViewModel @Inject constructor(
 
     private fun normalize(config: ServerConfig): ServerConfig =
         config.copy(baseUrl = SettingsRepository.normalizeBaseUrl(config.baseUrl))
+
+    // ---- 上传模式(A2) ----
+
+    val uploadMode: StateFlow<UploadMode> = settings.uploadModeFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UploadMode.MANUAL)
+
+    fun setUploadMode(mode: UploadMode) {
+        viewModelScope.launch { settings.saveUploadMode(mode) }
+    }
 
     // ---- 诊断(M4:零本地环境下的排查窗口) ----
 

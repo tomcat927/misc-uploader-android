@@ -100,6 +100,8 @@ class UploadService : Service() {
         }
         logger.log("upload", "开始 ${item.displayName}（${file.length()} B → ${item.remotePath}）")
         try {
+            // 逐级建目录(best-effort;A2 修正 M3 遗留——文件夹/auto 目录不存在时 PUT 必失败)
+            client.mkdirp(item.remotePath)
             var lastPost = 0L
             client.upload(file, item.remotePath, overwrite = true) { sent, total ->
                 val percent = if (total > 0) ((sent * 100) / total).toInt().coerceIn(0, 100) else 0

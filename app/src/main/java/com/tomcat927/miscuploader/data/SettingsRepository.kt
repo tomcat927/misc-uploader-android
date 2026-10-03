@@ -13,6 +13,15 @@ import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
+/** 上传模式(拍板 A2,对齐桌面端两种模式) */
+enum class UploadMode(val label: String) {
+    /** 手动:上传到所选目标目录 */
+    MANUAL("手动目录"),
+
+    /** 按日期自动:按每个文件自身修改时间归 auto/yyyy/MM */
+    AUTO_DATE("按日期自动"),
+}
+
 /** 已保存的连接配置(密码密文态) */
 data class StoredConfig(
     val baseUrl: String,
@@ -41,6 +50,23 @@ class SettingsRepository @Inject constructor(
         val BASE_URL = stringPreferencesKey("base_url")
         val USERNAME = stringPreferencesKey("username")
         val PASSWORD_CIPHER = stringPreferencesKey("password_cipher")
+        val UPLOAD_MODE = stringPreferencesKey("upload_mode")
+    }
+
+    /** 上传模式流(默认手动) */
+    val uploadModeFlow: Flow<UploadMode> = context.dataStore.data.map { prefs ->
+        when (prefs[Keys.UPLOAD_MODE]) {
+            "auto_date" -> UploadMode.AUTO_DATE
+            else -> UploadMode.MANUAL
+        }
+    }
+
+    suspend fun loadUploadModeOnce(): UploadMode = uploadModeFlow.first()
+
+    suspend fun saveUploadMode(mode: UploadMode) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.UPLOAD_MODE] = if (mode == UploadMode.AUTO_DATE) "auto_date" else "manual"
+        }
     }
 
     /** 密文态配置流(密码不经过此流) */
