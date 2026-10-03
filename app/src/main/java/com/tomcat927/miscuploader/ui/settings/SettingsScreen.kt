@@ -66,7 +66,17 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                     value = state.url,
                     onValueChange = viewModel::onUrlChange,
                     label = { Text("服务器地址") },
-                    supportingText = { Text("形如 https://host:5245（OpenList，需 HTTPS）") },
+                    supportingText = {
+                        Column {
+                            Text("形如 https://host:5245（OpenList；内网可输 http://内网IP:5244）")
+                            if (state.url.trim().lowercase().startsWith("http://")) {
+                                Text(
+                                    "明文连接：凭据与内容不经加密，仅建议可信内网使用",
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                    },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     modifier = Modifier.fillMaxWidth(),

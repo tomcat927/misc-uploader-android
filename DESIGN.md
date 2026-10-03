@@ -40,6 +40,8 @@
 | 上传模式（A2） | 设置项：手动目录（默认，现状）/ 按日期自动；**自动 = 按每个文件自身 mtime → `auto/yyyy/MM`**（本地时区），文件夹内部结构保留在月份目录下、多 mtime 会跨月（桌面端同语义）；分享接收在自动模式按**分享时刻**归类（content 无可靠 mtime）；手动模式行为不变 |
 | 入队任务制（A2） | `enqueue(tasks: List<UploadTask>)`——目标目录规划全部在入队侧完成（VM/分享），服务只管按 remotePath 上传；`UploadPlanning.autoDirFor/joinRemotePath` 单测覆盖（含时区固定） |
 | 修正（A2 顺带） | **M3 遗留 bug**：服务上传前未建远程目录，文件夹上传/auto 目录必失败 → `RemoteStorage.mkdirp`（逐级 mkdir 忽略"已存在"，misc-sync.py 同款），服务在 PUT 前调用 |
+| 明文连接策略（实测反馈拍板） | 平台默认禁 http 挡住了合法内网场景（5244 iptables 只对内；LE 证书只覆盖公网 IP，内网 IP 无证书可验；桌面端本就支持 http）。拍板：**允许 cleartext（usesCleartextTraffic=true）**，但无 scheme 仍自动补 https、显式输 `http://` 时设置页红字警示「仅建议可信内网」——选择权还给用户；公网仍按安全模型走 5245 https |
+| 修正（实测 bug 1） | **M1 遗留：Manifest 漏声明 `INTERNET` 权限**——真机连接报 `socket failed: EPERM`（坑 4）；补 INTERNET + ACCESS_NETWORK_STATE（后者为仅 Wi-Fi 功能预置） |
 | 本地文件 | `MANAGE_EXTERNAL_STORAGE` + `java.io.File`（自用侧载，不上架） |
 | 双窗口交互 | 借 SplitLanzou 的交互模型与参数：聚焦模型、展开动画 400ms、非聚焦侧两列瀑布流、底部 12sp 操作条；**借参数不借实现**（其代码 Apache-2.0，选择性借用需署名） |
 | 工程纪律 | **零本地环境**：不装 Android SDK/Gradle/Studio，构建签名发布全在 GitHub Actions，push 后监听到 completed；诊断下沉（设置→调试日志页，V1 必做）；adb 仅采集日志 |
