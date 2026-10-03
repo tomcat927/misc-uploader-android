@@ -134,6 +134,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
 
             ConnectionStatusCard(state)
 
+            com.tomcat927.miscuploader.ui.update.UpdateCard()
+
             UploadModeCard(
                 mode = uploadMode,
                 onSelect = viewModel::setUploadMode,

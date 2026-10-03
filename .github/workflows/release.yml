@@ -106,6 +106,7 @@ jobs:
           {
             "tag_name": "${TAG}",
             "version_display": "${VERSION_NAME}",
+            "version_code": ${{ steps.version.outputs.code }},
             "apk": "${PROXY_URL}",
             "github_apk": "${GITHUB_URL}",
             "apk_sha256": "${PROXY_URL}.sha256",
