@@ -65,6 +65,14 @@ jobs:
           VERSION_NAME: ${{ steps.version.outputs.version_name }}
         run: ./gradlew --no-daemon :app:compileReleaseKotlin :app:testDebugUnitTest --stacktrace
 
+      - name: Dump unit test results (on failure)
+        if: failure()
+        run: |
+          for f in $(find app/build/test-results -name "TEST-*.xml" 2>/dev/null); do
+            echo "===== $f ====="
+            cat "$f"
+          done
+
       - name: Build APK
         env:
           VERSION_CODE: ${{ steps.version.outputs.code }}
