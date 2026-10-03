@@ -41,7 +41,8 @@ class OpenListClient(
 ) : RemoteStorage {
 
     private val baseUrl = normalizeBaseUrl(baseUrl)
-    private val json = Json { ignoreUnknownKeys = true }
+    // encodeDefaults=true:默认值必须显式编码(per_page/refresh 省略会让服务端回落默认页大小,大目录截断)
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     @Volatile
     private var currentToken: String? = null

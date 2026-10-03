@@ -27,7 +27,7 @@ misc-uploader-android：杂物数字仓库（tianyi-misc-repo，私有仓）的 
 
 ## 已踩过的坑（随迭代补，别再踩）
 
-（暂无；首建 CI 时记录）
+1. **kotlinx.serialization 默认 `encodeDefaults=false`**：等于默认值的字段被静默省略——`FsListRequest` 的 `per_page=1000`/`refresh=false` 没发出去，服务端回落默认页大小 30，大目录被截断。Json 实例必须配 `encodeDefaults=true`。（OpenListClientTest 抓到的，协议回归门的价值所在；2026-10-03）
 
 ## 凭据与安全规约（不可妥协）
 
