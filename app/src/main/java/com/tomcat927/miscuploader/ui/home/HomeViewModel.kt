@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tomcat927.miscuploader.core.OpenListApiException
 import com.tomcat927.miscuploader.data.ConnectionManager
+import com.tomcat927.miscuploader.data.UploadRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -31,6 +32,7 @@ import kotlinx.coroutines.withContext
 class HomeViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val connection: ConnectionManager,
+    private val uploadRepository: UploadRepository,
 ) : ViewModel() {
 
     private val localRoot: String = Environment.getExternalStorageDirectory().absolutePath
@@ -52,6 +54,12 @@ class HomeViewModel @Inject constructor(
 
     /** 一次性提示(建目录结果等) */
     val events = MutableSharedFlow<String>(extraBufferCapacity = 8)
+
+    /** 多选(拍板 M3:仅本地侧可选;换目录即清空) */
+    private val _selectedLeft = MutableStateFlow<Set<String>>(emptySet())
+    val selectedLeft: StateFlow<Set<String>> = _selectedLeft.asStateFlow()
+    val selectionMode: Boolean
+        get() = _selectedLeft.value.isNotEmpty()
 
     init {
         recheckStoragePermission()
@@ -91,6 +99,53 @@ class HomeViewModel @Inject constructor(
 
     fun collapse() {
         _expandedSide.value = null
+    }
+
+    // ---- 多选与上传(M3) ----
+
+    /** 长按进入多选并选中该项 */
+    fun onItemLongPress(item: FileItem) {
+        _selectedLeft.update { it + item.name }
+    }
+
+    /** 多选态下单击切换选中 */
+    fun toggleSelect(item: FileItem) {
+        _selectedLeft.update { set ->
+            if (item.name in set) set - item.name else set + item.name
+        }
+    }
+
+    fun clearSelection() {
+        _selectedLeft.value = emptySet()
+    }
+
+    /** 上传已选项到远程当前目录(拍板:文件夹递归展开保留内部结构;确认框在 UI 层) */
+    fun uploadSelected() {
+        val target = _right.value.path
+        val selected = _selectedLeft.value
+        if (selected.isEmpty()) return
+        viewModelScope.launch {
+            val currentLocal = _left.value.path
+            val files = mutableListOf<Pair<File, String>>()
+            selected.forEach { name ->
+                val f = File(joinPath(currentLocal, name))
+                when {
+                    f.isFile -> files += f to name
+                    f.isDirectory -> f.walkTopDown()
+                        .filter { it.isFile }
+                        .forEach { child ->
+                            files += child to child.path.removePrefix(currentLocal).trimStart('/')
+                        }
+                }
+            }
+            if (files.isEmpty()) {
+                events.emit("没有可上传的文件")
+                return@launch
+            }
+            uploadRepository.enqueue(files, target)
+            _selectedLeft.value = emptySet()
+            events.emit("已加入队列：${files.size} 个文件 → ${target.ifEmpty { "/" }}")
+        }
     }
 
     // ---- 导航 ----
@@ -177,6 +232,8 @@ class HomeViewModel @Inject constructor(
     // ---- 内部 ----
 
     private fun load(side: Side, path: String, refresh: Boolean = false) {
+        // 换目录即清空多选(拍板:多选不跨目录保留)
+        if (side == Side.LEFT && stateFlowOf(side).value.path != path) _selectedLeft.value = emptySet()
         stateFlowOf(side).update { it.copy(path = path, loading = true, error = null) }
         viewModelScope.launch {
             try {

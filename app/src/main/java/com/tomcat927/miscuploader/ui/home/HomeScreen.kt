@@ -5,8 +5,10 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -37,8 +39,11 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -67,6 +72,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 
 /**
  * 双栏主界面(拍板借 SplitLanzou:触摸聚焦、聚焦侧单列/非聚焦侧两列、400ms 展开动画 + 边缘把手)。
+ * M3:本地侧多选 → 上传到远程当前目录(确认框 + Room 队列 + 前台服务)。
  */
 @Composable
 fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
@@ -75,8 +81,10 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val focused by viewModel.focusedSide.collectAsState()
     val expanded by viewModel.expandedSide.collectAsState()
     val storageGranted by viewModel.storageGranted.collectAsState()
+    val selectedLeft by viewModel.selectedLeft.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var mkdirSide by remember { mutableStateOf<Side?>(null) }
+    var uploadConfirm by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { snackbarHostState.showSnackbar(it) }
@@ -109,6 +117,8 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 isFocused = focused == Side.LEFT,
                 storageGranted = storageGranted,
                 breadcrumb = viewModel.breadcrumbOf(Side.LEFT, left.path),
+                selectionMode = selectedLeft.isNotEmpty(),
+                selected = selectedLeft,
                 onPaneTouched = { viewModel.focus(Side.LEFT) },
                 onExpandToggle = { viewModel.toggleExpand(Side.LEFT) },
                 onNavigate = { viewModel.navigate(Side.LEFT, it) },
@@ -116,6 +126,10 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onBreadcrumb = { viewModel.navigateToBreadcrumb(Side.LEFT, it) },
                 onRefresh = { viewModel.refresh(Side.LEFT) },
                 onMkdir = { mkdirSide = Side.LEFT },
+                onItemLongPress = viewModel::onItemLongPress,
+                onItemToggleSelect = viewModel::toggleSelect,
+                onUploadSelection = { uploadConfirm = true },
+                onCancelSelection = viewModel::clearSelection,
                 modifier = Modifier.weight(leftWeight).fillMaxHeight(),
             )
 
@@ -132,6 +146,8 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 isFocused = focused == Side.RIGHT,
                 storageGranted = true,
                 breadcrumb = viewModel.breadcrumbOf(Side.RIGHT, right.path),
+                selectionMode = false,
+                selected = emptySet(),
                 onPaneTouched = { viewModel.focus(Side.RIGHT) },
                 onExpandToggle = { viewModel.toggleExpand(Side.RIGHT) },
                 onNavigate = { viewModel.navigate(Side.RIGHT, it) },
@@ -139,11 +155,14 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onBreadcrumb = { viewModel.navigateToBreadcrumb(Side.RIGHT, it) },
                 onRefresh = { viewModel.refresh(Side.RIGHT) },
                 onMkdir = { mkdirSide = Side.RIGHT },
+                onItemLongPress = {},
+                onItemToggleSelect = {},
+                onUploadSelection = {},
+                onCancelSelection = {},
                 modifier = Modifier.weight(rightWeight).fillMaxHeight(),
             )
         }
 
-        // 展开态:被压一侧的边缘把手,点击恢复双栏
         when (expanded) {
             Side.LEFT -> EdgeHandle(
                 alignment = Alignment.CenterEnd,
@@ -172,6 +191,18 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             onDismiss = { mkdirSide = null },
         )
     }
+
+    if (uploadConfirm && selectedLeft.isNotEmpty()) {
+        UploadConfirmDialog(
+            count = selectedLeft.size,
+            targetPath = viewModel.breadcrumbOf(Side.RIGHT, right.path).joinToString("/"),
+            onConfirm = {
+                viewModel.uploadSelected()
+                uploadConfirm = false
+            },
+            onDismiss = { uploadConfirm = false },
+        )
+    }
 }
 
 // ---- 单侧浏览器 ----
@@ -183,6 +214,8 @@ private fun BrowserPane(
     isFocused: Boolean,
     storageGranted: Boolean,
     breadcrumb: List<String>,
+    selectionMode: Boolean,
+    selected: Set<String>,
     onPaneTouched: () -> Unit,
     onExpandToggle: () -> Unit,
     onNavigate: (String) -> Unit,
@@ -190,6 +223,10 @@ private fun BrowserPane(
     onBreadcrumb: (Int) -> Unit,
     onRefresh: () -> Unit,
     onMkdir: () -> Unit,
+    onItemLongPress: (FileItem) -> Unit,
+    onItemToggleSelect: (FileItem) -> Unit,
+    onUploadSelection: () -> Unit,
+    onCancelSelection: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val accent = if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -197,7 +234,6 @@ private fun BrowserPane(
     Column(
         modifier = modifier.clickable(interactionSource = null, indication = null, onClick = onPaneTouched),
     ) {
-        // 标题行:侧名 + 展开开关 + 刷新
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -214,7 +250,6 @@ private fun BrowserPane(
 
         BreadcrumbRow(breadcrumb, onBreadcrumb)
 
-        // 聚焦指示条
         Box(
             Modifier
                 .fillMaxWidth()
@@ -222,11 +257,22 @@ private fun BrowserPane(
                 .background(if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant),
         )
 
-        // 内容区
         Box(Modifier.weight(1f)) {
             when {
-                !isFocused -> CompactFileList(state, hasParent = breadcrumb.size > 1, onNavigate, onNavigateUp)
-                else -> FocusedFileList(state, hasParent = breadcrumb.size > 1, onNavigate, onNavigateUp)
+                selectionMode && side == Side.LEFT ->
+                    SelectableFileList(state, selected, onNavigate, onNavigateUp, onItemToggleSelect)
+
+                isFocused -> FocusedFileList(
+                    state, breadcrumb.size > 1, onNavigate, onNavigateUp,
+                    onItemLongPress = onItemLongPress, selectionMode = false, selected = emptySet(),
+                    onItemToggleSelect = onItemToggleSelect,
+                )
+
+                else -> CompactFileList(
+                    state, breadcrumb.size > 1, onNavigate, onNavigateUp,
+                    onItemLongPress = onItemLongPress, selectionMode = false, selected = emptySet(),
+                    onItemToggleSelect = onItemToggleSelect, selectionEnabled = side == Side.LEFT,
+                )
             }
 
             if (side == Side.LEFT && !storageGranted) {
@@ -234,48 +280,75 @@ private fun BrowserPane(
             }
         }
 
-        // 底部操作条
+        // 底部操作条:多选态显示上传操作;普通态显示新建文件夹
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(if (isFocused) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onMkdir) {
-                Icon(Icons.Filled.CreateNewFolder, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("新建文件夹", style = MaterialTheme.typography.labelMedium)
+            if (selectionMode && side == Side.LEFT) {
+                TextButton(onClick = onCancelSelection) { Text("取消") }
+                Spacer(Modifier.weight(1f))
+                Text("已选 ${selected.size}", style = MaterialTheme.typography.labelLarge)
+                Spacer(Modifier.weight(1f))
+                Button(
+                    onClick = onUploadSelection,
+                    enabled = selected.isNotEmpty(),
+                    modifier = Modifier.padding(end = 10.dp),
+                ) {
+                    Icon(Icons.Filled.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("上传")
+                }
+            } else {
+                TextButton(onClick = onMkdir) {
+                    Icon(Icons.Filled.CreateNewFolder, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("新建文件夹", style = MaterialTheme.typography.labelMedium)
+                }
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "${state.entries.size} 项",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.padding(end = 12.dp),
+                )
             }
-            Spacer(Modifier.weight(1f))
-            Text(
-                "${state.entries.size} 项",
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(end = 12.dp),
-            )
         }
     }
 }
 
-/** 聚焦侧:单列列表(拍板) */
+/** 聚焦侧:单列列表(拍板);selectionMode 时勾选切换 */
 @Composable
 private fun FocusedFileList(
     state: BrowserState,
     hasParent: Boolean,
     onNavigate: (String) -> Unit,
     onNavigateUp: () -> Unit,
+    onItemLongPress: (FileItem) -> Unit,
+    selectionMode: Boolean,
+    selected: Set<String>,
+    onItemToggleSelect: (FileItem) -> Unit,
 ) {
     PaneContent(state) { entries ->
         LazyColumn(Modifier.fillMaxSize()) {
-            if (hasParent) {
+            if (hasParent && !selectionMode) {
                 item(key = "..") {
-                    FileRow(FileItem("..", true, 0, "")) { onNavigateUp() }
+                    FileRow(FileItem("..", true, 0, ""), selected = false, selectionMode = false) { onNavigateUp() }
                 }
             }
             items(entries, key = { it.name }) { item ->
-                FileRow(item) { onOpen ->
-                    if (onOpen.isDir) onNavigate(onOpen.name)
-                    // 文件点击:M3 接入多选/上传
-                }
+                FileRow(
+                    item = item,
+                    selected = item.name in selected,
+                    selectionMode = selectionMode,
+                    onOpen = { opened ->
+                        if (selectionMode) onItemToggleSelect(opened)
+                        else if (opened.isDir) onNavigate(opened.name)
+                        // 文件单击(非多选):M3 无操作;分享接收在 M4
+                    },
+                    onLongPress = { onItemLongPress(it) },
+                )
             }
         }
     }
@@ -288,27 +361,116 @@ private fun CompactFileList(
     hasParent: Boolean,
     onNavigate: (String) -> Unit,
     onNavigateUp: () -> Unit,
+    onItemLongPress: (FileItem) -> Unit,
+    selectionMode: Boolean,
+    selected: Set<String>,
+    onItemToggleSelect: (FileItem) -> Unit,
+    selectionEnabled: Boolean,
 ) {
     PaneContent(state) { entries ->
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
             modifier = Modifier.fillMaxSize(),
         ) {
-            if (hasParent) {
+            if (hasParent && !selectionMode) {
                 item(key = "..", span = { GridItemSpan(2) }) {
-                    FileRow(FileItem("..", true, 0, "")) { onNavigateUp() }
+                    FileRow(FileItem("..", true, 0, ""), selected = false, selectionMode = false) { onNavigateUp() }
                 }
             }
             items(entries, key = { it.name }) { item ->
-                CompactFileCell(item) {
-                    if (item.isDir) onNavigate(item.name)
-                }
+                CompactFileCell(
+                    item = item,
+                    selected = item.name in selected,
+                    selectionMode = selectionMode && selectionEnabled,
+                    onOpen = {
+                        if (selectionMode && selectionEnabled) onItemToggleSelect(item)
+                        else if (item.isDir) onNavigate(item.name)
+                    },
+                    onLongPress = if (selectionEnabled) {
+                        { onItemLongPress(item) }
+                    } else {
+                        null
+                    },
+                )
             }
         }
     }
 }
 
-/** 内容区的加载/错误/空态包装 */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FileRow(
+    item: FileItem,
+    selected: Boolean,
+    selectionMode: Boolean,
+    onOpen: (FileItem) -> Unit,
+    onLongPress: ((FileItem) -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = { onOpen(item) },
+                onLongClick = onLongPress?.let { handler -> { handler(item) } },
+            )
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (selectionMode) {
+            Checkbox(checked = selected, onCheckedChange = { onOpen(item) })
+        } else {
+            Icon(
+                if (item.isDir) Icons.Filled.Folder else Icons.Filled.InsertDriveFile,
+                contentDescription = null,
+                tint = if (item.isDir) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(item.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (item.name != "..") {
+                Text(
+                    "${formatBytes(item.size)} · ${item.modifiedText}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CompactFileCell(
+    item: FileItem,
+    selected: Boolean,
+    selectionMode: Boolean,
+    onOpen: () -> Unit,
+    onLongPress: (() -> Unit)?,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onOpen, onLongClick = onLongPress)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (selectionMode) {
+            Checkbox(checked = selected, onCheckedChange = { onOpen() })
+        } else {
+            Icon(
+                if (item.isDir) Icons.Filled.Folder else Icons.Filled.InsertDriveFile,
+                contentDescription = null,
+                tint = if (item.isDir) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+        }
+        Text(item.name, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
 @Composable
 private fun PaneContent(state: BrowserState, content: @Composable (List<FileItem>) -> Unit) {
     when {
@@ -334,55 +496,6 @@ private fun PaneContent(state: BrowserState, content: @Composable (List<FileItem
         }
 
         else -> content(state.entries)
-    }
-}
-
-@Composable
-private fun FileRow(item: FileItem, onOpen: (FileItem) -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onOpen(item) }
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            if (item.isDir) Icons.Filled.Folder else Icons.Filled.InsertDriveFile,
-            contentDescription = null,
-            tint = if (item.isDir) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(20.dp),
-        )
-        Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f)) {
-            Text(item.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (item.name != "..") {
-                Text(
-                    "${formatBytes(item.size)} · ${item.modifiedText}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun CompactFileCell(item: FileItem, onOpen: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onOpen)
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            if (item.isDir) Icons.Filled.Folder else Icons.Filled.InsertDriveFile,
-            contentDescription = null,
-            tint = if (item.isDir) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(16.dp),
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(item.name, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -429,25 +542,18 @@ private fun StoragePermissionCard(modifier: Modifier = Modifier) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            ButtonRow(context)
-        }
-    }
-}
-
-@Composable
-private fun ButtonRow(context: android.content.Context) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        TextButton(onClick = {
-            val intents = listOf(
-                Intent(
-                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                    Uri.parse("package:${context.packageName}"),
-                ),
-                Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
-            )
-            intents.firstOrNull { runCatching { context.startActivity(it) }.isSuccess }
-        }) {
-            Text("去授权")
+            TextButton(onClick = {
+                val intents = listOf(
+                    Intent(
+                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                        Uri.parse("package:${context.packageName}"),
+                    ),
+                    Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
+                )
+                intents.firstOrNull { runCatching { context.startActivity(it) }.isSuccess }
+            }) {
+                Text("去授权")
+            }
         }
     }
 }
@@ -486,6 +592,23 @@ private fun MkdirDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
         },
         confirmButton = {
             TextButton(onClick = { if (name.isNotBlank()) onConfirm(name) }) { Text("创建") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}
+
+@Composable
+private fun UploadConfirmDialog(count: Int, targetPath: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("上传") },
+        text = {
+            Text("已选择 $count 个文件（文件夹按内部结构展开），将上传到：\n$targetPath")
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("执行上传") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
