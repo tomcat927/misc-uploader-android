@@ -64,19 +64,16 @@ class UpdateViewModel @Inject constructor(
         }
     }
 
-    /** 未授权「安装未知应用」时跳系统设置;授权后用户回来再点一次安装 */
+    /** 未授权「安装未知应用」时跳系统设置(带 package URI 直达本应用开关);授权后用户回来再点一次安装 */
     fun install(context: Context) {
         val file = downloaded ?: return
         if (context.packageManager.canRequestPackageInstalls()) {
             context.startActivity(updateService.createInstallIntent(file))
         } else {
-            val intent = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                Intent(Settings.ACTION_MANAGE_APP_INSTALL_SOURCES)
-                    .setData(Uri.parse("package:${context.packageName}"))
-            } else {
-                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
-                    .setData(Uri.parse("package:${context.packageName}"))
-            }
+            val intent = Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:${context.packageName}"),
+            )
             context.startActivity(intent)
         }
     }
