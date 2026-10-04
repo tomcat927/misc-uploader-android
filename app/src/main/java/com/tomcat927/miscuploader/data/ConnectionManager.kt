@@ -65,7 +65,13 @@ class ConnectionManager @Inject constructor(
             _state.value = State.Failed(e.message ?: "请求失败")
         } catch (e: IOException) {
             logger.log("connect", "连接失败（网络 ${e.javaClass.simpleName}）：${e.message} · 目标 ${config.baseUrl}")
-            _state.value = State.Failed("网络错误：${e.message ?: "无法连接"}")
+            // 真机实测坑(2026-10-05):浏览器通而 app 被拒=系统联网控制按应用断网(MIUI 误触高发)
+            val hint = if (e.message?.contains("ECONNREFUSED") == true) {
+                "；若浏览器能打开同一地址，请检查系统「联网控制」是否禁用了本应用"
+            } else {
+                ""
+            }
+            _state.value = State.Failed("网络错误：${e.message ?: "无法连接"}$hint")
         } catch (e: Exception) {
             logger.log("connect", "连接失败（${e.javaClass.simpleName}）：${e.message} · 目标 ${config.baseUrl}")
             _state.value = State.Failed(e.message ?: e.javaClass.simpleName)
