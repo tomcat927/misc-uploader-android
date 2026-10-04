@@ -21,7 +21,7 @@
 | 网络 | kotlinx.serialization 1.7.3 + **OkHttp 4.12.0**（M1 实钉；原拍板写 5.x，stable 坐标未验证，API 同构，升级留 V1.1 评估）；不上 Retrofit（全 app 4 个端点） |
 | DI | Hilt（KSP） |
 | 持久化 | Room（队列+历史）+ Preferences DataStore（设置）；密码 = Keystore AES-GCM 包 DataStore（androidx security-crypto 已废弃不用） |
-| 密码框语义（移动端适配，M1） | 输入框留空 = 沿用已存密码（placeholder 掩码提示，对齐桌面端哨兵语义）；「显示」= 取回真实密码进输入框，「隐藏」= 清空回到沿用态；显式清空后保存 = 删除已存密码 |
+| 密码框语义（M1 建，2026-10-04 实测修订） | **已存密码以掩码值回显（•••••••• 作为字段值）**，聚焦全选、输入即替换（对齐桌面端哨兵语义）；清空 = 沿用；「显示」取回真实密码、「隐藏」回掩码值；UI 暂无删除密码入口（边缘需求）。原 placeholder 方案被实测推翻（视觉像空字段，看不出已存数据） |
 | 地址归一化（M1） | 无 scheme 自动补 https://、去尾部斜杠（桌面端要求手输完整 URL，移动端放宽） |
 | 连接测试（M1） | 「连接」= 保存 + login + list("/") 一步，已连接卡片显示根目录项数；启动时配置齐全自动连接（MiscApp → ConnectionManager） |
 | 协议回归测试（M1） | `OpenListClientTest`（MockWebServer，9 例）：token 透传 / 401 重登一次 / 防无限循环 / File-Path 编码还原 / 流式+进度 / Overwrite 头 / 200+HTML 假成功防御 / 403 同名闸门——质量门从空转变为真门 |
