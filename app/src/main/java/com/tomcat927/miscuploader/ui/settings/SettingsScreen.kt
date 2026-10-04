@@ -34,11 +34,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tomcat927.miscuploader.data.SettingsRepository
 import com.tomcat927.miscuploader.data.UploadMode
 
 /**
@@ -94,16 +97,18 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
             }
 
             CommitOnFocusLost(viewModel::commitFields) {
+                // 掩码值回显(2026-10-04 修订):已存密码以 •••••••• 作为字段值;聚焦全选,输入即替换
+                var pf by remember(state.passwordInput) {
+                    mutableStateOf(
+                        TextFieldValue(state.passwordInput, TextRange(state.passwordInput.length)),
+                    )
+                }
                 OutlinedTextField(
-                    value = state.passwordInput,
-                    onValueChange = viewModel::onPasswordChange,
+                    value = pf,
+                    onValueChange = { pf = it; viewModel.onPasswordChange(it.text) },
                     label = { Text("密码") },
                     placeholder = {
-                        if (state.hasStoredPassword && !state.revealing) {
-                            Text("••••••••（已保存，留空沿用）")
-                        } else {
-                            Text("输入密码")
-                        }
+                        Text(if (state.hasStoredPassword) "留空沿用已保存密码" else "输入密码")
                     },
                     singleLine = true,
                     visualTransformation = if (state.revealing) {
@@ -116,7 +121,13 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                             Text(if (state.revealing) "隐藏" else "显示")
                         }
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { st ->
+                            if (st.isFocused && pf.text == SettingsRepository.PASSWORD_MASK) {
+                                pf = pf.copy(selection = TextRange(0, pf.text.length))
+                            }
+                        },
                 )
             }
 

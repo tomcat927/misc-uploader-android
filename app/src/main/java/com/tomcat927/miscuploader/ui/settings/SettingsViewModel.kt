@@ -60,7 +60,13 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             val stored = settings.loadOnce()
             _uiState.update {
-                it.copy(url = stored.baseUrl, username = stored.username, hasStoredPassword = stored.hasPassword)
+                // 拍板(2026-10-04 修订):已存密码以掩码值回显(对齐桌面端),不再用 placeholder 方案
+                it.copy(
+                    url = stored.baseUrl,
+                    username = stored.username,
+                    hasStoredPassword = stored.hasPassword,
+                    passwordInput = if (stored.hasPassword) SettingsRepository.PASSWORD_MASK else "",
+                )
             }
         }
         viewModelScope.launch {
@@ -99,14 +105,14 @@ class SettingsViewModel @Inject constructor(
         _uiState.update { it.copy(passwordInput = value, validationHint = null) }
     }
 
-    /** 字段失焦即落盘(拍板对齐桌面端:无保存按钮) */
+    /** 字段失焦即落盘(拍板对齐桌面端:无保存按钮)。密码:掩码哨兵或空 = 沿用已存 */
     fun commitFields() {
         if (!dirty) return
         dirty = false
         val s = _uiState.value
         if (s.url.isBlank() && s.username.isBlank() && s.passwordInput.isEmpty()) return
         viewModelScope.launch {
-            val ok = settings.save(s.url, s.username, password = s.passwordInput.ifEmpty { null })
+            val ok = settings.save(s.url, s.username, password = s.passwordInput.takeUnless { it.isEmpty() || it == SettingsRepository.PASSWORD_MASK })
             if (!ok) {
                 _uiState.update { it.copy(validationHint = "服务器地址与用户名不能为空，本次修改未保存") }
             }
@@ -117,7 +123,7 @@ class SettingsViewModel @Inject constructor(
     fun connect() {
         val s = _uiState.value
         viewModelScope.launch {
-            val password = s.passwordInput.ifEmpty { null }
+            val password = s.passwordInput.takeUnless { it.isEmpty() || it == SettingsRepository.PASSWORD_MASK }
             if (s.url.isBlank() || s.username.isBlank()) {
                 _uiState.update { it.copy(validationHint = "服务器地址与用户名不能为空") }
                 return@launch
@@ -141,7 +147,7 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    /** 「显示」:按需取回真实密码;「隐藏」回到沿用态(输入框清空 = 沿用已存) */
+    /** 「显示」:取回真实密码;「隐藏」:回到掩码值(输入即替换语义与桌面端一致) */
     fun toggleReveal() {
         val s = _uiState.value
         if (!s.revealing) {
@@ -153,7 +159,7 @@ class SettingsViewModel @Inject constructor(
                 }
             }
         } else {
-            _uiState.update { it.copy(revealing = false, passwordInput = "") }
+            _uiState.update { it.copy(revealing = false, passwordInput = SettingsRepository.PASSWORD_MASK) }
         }
     }
 
