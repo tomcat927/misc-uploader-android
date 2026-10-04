@@ -177,14 +177,14 @@ class SettingsRepository @Inject constructor(
 
     /** 分享接收目标目录(手动模式;默认仓库根 "/";自动归类模式不受影响) */
     val defaultShareDirFlow: Flow<String> = context.dataStore.data.map { prefs ->
-        normalizeDir(prefs[Keys.DEFAULT_SHARE_DIR] ?: "/")
+        UploadPlanning.normalizeDir(prefs[Keys.DEFAULT_SHARE_DIR] ?: "/")
     }
 
     suspend fun loadDefaultShareDirOnce(): String = defaultShareDirFlow.first()
 
     suspend fun saveDefaultShareDir(dir: String) {
         context.dataStore.edit { prefs ->
-            prefs[Keys.DEFAULT_SHARE_DIR] = normalizeDir(dir)
+            prefs[Keys.DEFAULT_SHARE_DIR] = UploadPlanning.normalizeDir(dir)
         }
     }
 
