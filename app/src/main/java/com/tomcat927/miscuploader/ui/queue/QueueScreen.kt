@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Pause
@@ -27,6 +28,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -140,6 +142,9 @@ class QueueViewModel @Inject constructor(
 
     fun retry(id: Long) = repository.retry(id)
 
+    /** 取消:排队中直接删行;上传中的置取消标记(行同时删),worker 进度回调感知后中止 */
+    fun cancel(id: Long) = repository.cancelUpload(id)
+
     fun retryAllFailed() = repository.retryAllFailed()
 
     fun clearFinished() = repository.clearFinished()
@@ -159,6 +164,7 @@ private enum class QueueView(val label: String) {
 @Composable
 fun QueueScreen(viewModel: QueueViewModel = viewModel()) {
     val items by viewModel.items.collectAsState()
+    val queuePaused by viewModel.queuePaused.collectAsState()
     val history by viewModel.history.collectAsState()
     val archive by viewModel.archive.collectAsState()
     var view by rememberSaveable { mutableStateOf(QueueView.QUEUE) }
@@ -207,6 +213,7 @@ fun QueueScreen(viewModel: QueueViewModel = viewModel()) {
                 onRetryAllFailed = viewModel::retryAllFailed,
                 onClearFinished = viewModel::clearFinished,
                 onRetry = viewModel::retry,
+                onCancelRow = viewModel::cancel,
             )
 
             QueueView.HISTORY -> HistoryList(history)
@@ -262,6 +269,7 @@ private fun QueueList(
     onRetryAllFailed: () -> Unit,
     onClearFinished: () -> Unit,
     onRetry: (Long) -> Unit,
+    onCancelRow: (Long) -> Unit,
 ) {
     if (items.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -303,6 +311,7 @@ private fun QueueList(
                 QueueRow(
                     item = item,
                     onRetry = { onRetry(item.id) },
+                    onCancel = { onCancelRow(item.id) },
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
             }
@@ -362,7 +371,7 @@ private fun HistoryList(history: List<HistoryEntity>) {
 private val HISTORY_DATE = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA)
 
 @Composable
-private fun QueueRow(item: UploadItemEntity, onRetry: () -> Unit) {
+private fun QueueRow(item: UploadItemEntity, onRetry: () -> Unit, onCancel: () -> Unit) {
     val accent = when (item.state) {
         UploadState.DONE -> MaterialTheme.colorScheme.primary
         UploadState.FAILED -> MaterialTheme.colorScheme.error
@@ -402,6 +411,17 @@ private fun QueueRow(item: UploadItemEntity, onRetry: () -> Unit) {
             )
             if (item.state == UploadState.FAILED) {
                 TextButton(onClick = onRetry) { Text("重试") }
+            }
+            if (item.state in UploadState.IN_FLIGHT) {
+                // 在途任务可取消(排队=直接移除;上传中=中止传输,不算失败)
+                IconButton(onClick = onCancel, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Filled.Close,
+                        contentDescription = "取消上传",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
             }
         }
 

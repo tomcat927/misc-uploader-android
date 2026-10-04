@@ -130,6 +130,10 @@ class UploadService : Service() {
     }
 
     private suspend fun process(item: UploadItemEntity) {
+        if (repository.isCancelRequested(item.id)) {
+            repository.clearCancel(item.id)
+            return
+        }
         val client = connectionManager.clientOrNull()
         if (client == null) {
             // 未连接:退回 pending 停队列;连接后从队列页/启动恢复
@@ -161,6 +165,10 @@ class UploadService : Service() {
             repository.markSkipped(item.id, "同内容已存在：${existing.remotePath}")
             return
         }
+        if (repository.isCancelRequested(item.id)) {
+            repository.clearCancel(item.id)
+            return
+        }
         repository.markUploading(item.id)
 
         logger.log("upload", "开始 ${item.displayName}（${file.length()} B → ${item.remotePath}）")
@@ -169,6 +177,7 @@ class UploadService : Service() {
             client.mkdirp(item.remotePath)
             var lastPost = 0L
             client.upload(file, item.remotePath, overwrite = true) { sent, total ->
+                if (repository.isCancelRequested(item.id)) throw UploadCancelledException()
                 val percent = if (total > 0) ((sent * 100) / total).toInt().coerceIn(0, 100) else 0
                 val now = System.currentTimeMillis()
                 if (percent >= 100 || now - lastPost > 400) {
@@ -180,12 +189,19 @@ class UploadService : Service() {
             repository.recordHistory(sha, item.remotePath, item.displayName, file.length())
             logger.log("upload", "完成 ${item.displayName}")
             refreshRemoteDir(item.remoteDir)
+        } catch (e: UploadCancelledException) {
+            // 用户取消:行已删,不算失败、不重试
+            repository.clearCancel(item.id)
+            logger.log("upload", "已取消 ${item.displayName}")
         } catch (e: OpenListApiException) {
             handleFailure(item, e.message ?: "请求失败")
         } catch (e: Exception) {
             handleFailure(item, "网络错误：${e.message ?: e.javaClass.simpleName}")
         }
     }
+
+    /** 用户取消传输(经取消标记从进度回调抛出) */
+    private class UploadCancelledException : Exception("已取消")
 
     private suspend fun handleFailure(item: UploadItemEntity, message: String) {
         val retries = item.retries + 1

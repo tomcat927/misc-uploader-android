@@ -12,6 +12,9 @@ interface UploadDao {
     @Insert
     suspend fun insertAll(items: List<UploadItemEntity>)
 
+    @Query("DELETE FROM upload_items WHERE id = :id")
+    suspend fun delete(id: Long)
+
     @Query("SELECT * FROM upload_items ORDER BY enqueuedAt DESC")
     fun observeAll(): Flow<List<UploadItemEntity>>
 

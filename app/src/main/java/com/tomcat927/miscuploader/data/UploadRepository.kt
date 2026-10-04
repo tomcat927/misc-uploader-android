@@ -49,6 +49,22 @@ class UploadRepository @Inject constructor(
         appScope.launch { settings.saveQueuePaused(paused) }
     }
 
+    // ---- 单项取消(拍板 2026-10-05):pending 直接删行;uploading = 删行 + 内存标记,
+    // worker 进度回调感知后中止(取消不算失败、不重试);行已删,后续状态写自然失效 ----
+
+    private val cancelRequests: MutableSet<Long> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+
+    fun cancelUpload(id: Long) {
+        cancelRequests.add(id)
+        appScope.launch { dao.delete(id) }
+    }
+
+    fun isCancelRequested(id: Long): Boolean = cancelRequests.contains(id)
+
+    fun clearCancel(id: Long) {
+        cancelRequests.remove(id)
+    }
+
     /**
      * 入队并拉起前台服务(拍板 A2:目标目录在入队侧规划——手动模式 = 所选目录,
      * 自动模式 = 按各文件 mtime 的 auto/yyyy/MM;文件夹结构由调用方展开保留)。
