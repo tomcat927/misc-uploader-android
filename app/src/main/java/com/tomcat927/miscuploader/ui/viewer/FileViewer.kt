@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.webkit.MimeTypeMap
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,11 +16,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
@@ -125,7 +126,7 @@ fun FileViewerDialog(
     onClose: () -> Unit,
 ) {
     // 空条目直接不弹窗(全屏 Dialog 空内容会挡住全部触摸)
-    val start = request.items.getOrNull(request.index) ?: request.items.firstOrNull() ?: return
+    if (request.items.isEmpty()) return
     Dialog(
         onDismissRequest = onClose,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -136,38 +137,51 @@ fun FileViewerDialog(
                 .background(Color.Black),
         ) {
             when (request.kind) {
-                FileKind.IMAGE -> ImagePager(request, localFile, remoteRawUrl)
-                FileKind.TEXT -> TextViewer(request, localFile, remoteDownload)
-                FileKind.OTHER -> DelegateViewer(request, localFile, remoteDownload, onClose)
-            }
-
-            // 顶部:标题 + 关闭
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color.Black.copy(alpha = 0.5f))
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        start.name,
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (request.kind == FileKind.IMAGE && request.items.size > 1) {
-                        Text(
-                            "${request.index + 1}/${request.items.size} · 左右滑动翻看",
-                            color = Color.White.copy(alpha = 0.7f),
-                            style = MaterialTheme.typography.labelSmall,
-                        )
-                    }
+                FileKind.IMAGE -> {
+                    ImagePager(request, localFile, remoteRawUrl)
+                    ViewerTopBar(request, onClose)
                 }
-                FilledTonalClose(onClose)
+
+                // MT 风格:文本查看器自带头部信息条,不叠悬浮标题
+                FileKind.TEXT -> TextViewer(request, localFile, remoteDownload, onClose)
+
+                FileKind.OTHER -> {
+                    DelegateViewer(request, localFile, remoteDownload, onClose)
+                    ViewerTopBar(request, onClose)
+                }
             }
         }
+    }
+}
+
+/** 悬浮标题条(图片/委托页用;文本查看器有自己的 MT 式头部) */
+@Composable
+private fun ViewerTopBar(request: ViewerRequest, onClose: () -> Unit) {
+    val start = request.items.getOrNull(request.index) ?: return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.5f))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                start.name,
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (request.kind == FileKind.IMAGE && request.items.size > 1) {
+                Text(
+                    "${request.index + 1}/${request.items.size} · 左右滑动翻看",
+                    color = Color.White.copy(alpha = 0.7f),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+        }
+        FilledTonalClose(onClose)
     }
 }
 
@@ -264,16 +278,22 @@ private fun ZoomableImage(
     )
 }
 
-// ---- 文本(只读,分块) ----
+// ---- 文本(只读;MT 管理器风格:深色信息条 + 白底黑字 + 行号栏,拍板 2026-10-05) ----
+
+private val MtHeaderDark = Color(0xFF25252A)
+private val MtTextDark = Color(0xFF1E1E1E)
+private val MtLineNoGray = Color(0xFF9E9E9E)
+private val MtCurrentLine = Color(0xFFFFF7CE)
 
 @Composable
 private fun TextViewer(
     request: ViewerRequest,
     localFile: (FileItem) -> File,
     remoteDownload: suspend (FileItem, onProgress: (Float) -> Unit) -> File,
+    onClose: () -> Unit,
 ) {
     val item = request.items.first()
-    var text by remember { mutableStateOf("加载中…") }
+    var text by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(true) }
     var hasMore by remember { mutableStateOf(false) }
     var file by remember { mutableStateOf<File?>(null) }
@@ -281,6 +301,7 @@ private fun TextViewer(
     var charset by remember { mutableStateOf("UTF-8") }
     var error by remember { mutableStateOf<String?>(null) }
     var downloadProgress by remember { mutableFloatStateOf(-1f) }
+    var highlighted by remember { mutableStateOf(-1) }
 
     fun readChunk(f: File, offset: Long): Pair<String, Long> {
         val bytes = f.inputStream().use { input ->
@@ -315,7 +336,7 @@ private fun TextViewer(
                 error = "文件超过 50MB，不进文本查看器"
             } else {
                 val (chunk, next) = readChunk(f, 0)
-                text = chunk.ifEmpty { "（空文件）" }
+                text = chunk
                 hasMore = next < f.length()
                 nextOffset = next
                 error = null
@@ -327,50 +348,105 @@ private fun TextViewer(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (loading) {
-                if (downloadProgress >= 0) {
-                    Column(
-                        Modifier.align(Alignment.Center).padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        LinearProgressIndicator(
-                            progress = { downloadProgress },
-                            modifier = Modifier.fillMaxWidth().height(6.dp),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "下载预览 ${(downloadProgress * 100).toInt()}%",
-                            color = Color.White.copy(alpha = 0.8f),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
+    val lines = remember(text) { text.split('\n') }
+
+    Column(Modifier.fillMaxSize().background(MtHeaderDark)) {
+        // 头部信息条(MT 式):文件名 + 编码 + 行数 + 关闭
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                item.name,
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                charset,
+                color = Color.White.copy(alpha = 0.75f),
+                style = MaterialTheme.typography.labelSmall,
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "${lines.size} 行",
+                color = Color.White.copy(alpha = 0.75f),
+                style = MaterialTheme.typography.labelSmall,
+            )
+            Spacer(Modifier.width(10.dp))
+            FilledTonalClose(onClose)
+        }
+
+        // 正文:白底 + 行号栏(点击行高亮;只读版)
+        Box(Modifier.weight(1f).fillMaxWidth().background(Color.White)) {
+            when {
+                loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    if (downloadProgress >= 0) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            LinearProgressIndicator(
+                                progress = { downloadProgress },
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp).height(6.dp),
+                                color = MtTextDark,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "下载预览 ${(downloadProgress * 100).toInt()}%",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MtTextDark,
+                            )
+                        }
+                    } else {
+                        CircularProgressIndicator(color = MtTextDark)
                     }
-                } else {
-                    CircularProgressIndicator(color = Color.White)
                 }
-            } else {
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)) {
-                    SelectionContainer {
-                        Text(
-                            text + if (hasMore) "\n\n…（还有更多内容）" else "",
-                            color = Color.White,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                        )
+
+                error != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        error ?: "",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+
+                else -> LazyColumn(Modifier.fillMaxSize()) {
+                    itemsIndexed(lines) { idx, line ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(if (idx == highlighted) MtCurrentLine else Color.White)
+                                .clickable(interactionSource = null, indication = null) { highlighted = idx },
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            Text(
+                                "${idx + 1}",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MtLineNoGray,
+                                textAlign = TextAlign.End,
+                                modifier = Modifier.width(44.dp).padding(end = 8.dp, top = 3.dp),
+                            )
+                            SelectionContainer {
+                                Text(
+                                    line.ifEmpty { " " },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MtTextDark,
+                                    softWrap = true,
+                                    modifier = Modifier.weight(1f).padding(top = 3.dp),
+                                )
+                            }
+                        }
                     }
                 }
-            }
-            error?.let {
-                Text(
-                    it,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                )
             }
         }
-        if (hasMore && !loading) {
+
+        if (hasMore && !loading && error == null) {
             TextButton(
                 onClick = {
                     val f = file ?: return@TextButton
@@ -387,7 +463,7 @@ private fun TextViewer(
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("加载更多")
+                Text("加载更多", color = MtTextDark)
             }
         }
     }
