@@ -39,13 +39,22 @@ class UpdateViewModel @Inject constructor(
     private val _state = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val state: StateFlow<UpdateState> = _state.asStateFlow()
 
-    /** 主动检查发现新版本 → 弹窗确认(启动静默检查发现的不弹窗,只 Snackbar+卡片直显) */
+    /** 发现新版本的确认弹窗(主动检查/启动发现共用,Main 页渲染) */
     private val _showInstallConfirm = MutableStateFlow(false)
     val showInstallConfirm: StateFlow<Boolean> = _showInstallConfirm.asStateFlow()
 
+    /** 当前弹窗来源:true=启动发现(「暂不」记住该版本);false=主动检查(每次都弹) */
+    private var confirmFromStartup = false
+
+    /** 启动弹窗被「暂不」的版本 tag(空 = 无) */
+    private var dismissedTag = ""
+
+    /** 静默提示事件:已「暂不」过的版本再次发现时 Snackbar(不弹窗) */
+    val snackEvents = MutableSharedFlow<String>(extraBufferCapacity = 1)
+
     private var downloaded: File? = null
 
-    /** 启动静默检查发现的新版本事件(Main 页 Snackbar 提示用) */
+    /** 启动静默检查发现的新版本事件(MainScreen 据此弹窗或 Snackbar) */
     val foundEvents = updateCheckManager.foundEvents
 
     /** 启动检查更新开关(设置「应用更新」卡内切换) */
@@ -53,6 +62,7 @@ class UpdateViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
     init {
+        viewModelScope.launch { dismissedTag = settings.updateDismissedTagOnce() }
         // 启动静默检查的结果回填:卡片无需手动点检查即显示「发现新版本」;
         // 只回填非交互态,不覆盖用户正在进行的检查/下载/安装
         viewModelScope.launch {
@@ -63,6 +73,17 @@ class UpdateViewModel @Inject constructor(
                 }
             }
         }
+    }
+
+    /** 启动检查发现新版:该版本没被「暂不」过 → 弹窗;否则降级 Snackbar */
+    fun onStartupUpdateFound(info: UpdateService.UpdateInfo) {
+        if (_showInstallConfirm.value) return
+        if (info.tagName.isNotBlank() && info.tagName == dismissedTag) {
+            snackEvents.tryEmit("发现新版本 ${info.tagName}，可在「设置 → 应用更新」下载安装")
+            return
+        }
+        confirmFromStartup = true
+        _showInstallConfirm.value = true
     }
 
     fun setStartupCheckEnabled(enabled: Boolean) {
@@ -76,7 +97,8 @@ class UpdateViewModel @Inject constructor(
             try {
                 val info = updateService.checkForUpdate()
                 _state.value = if (info == null) UpdateState.NoUpdate else UpdateState.Available(info)
-                // 主动检查发现新版 → 弹窗问是否下载安装
+                // 主动检查发现新版 → 弹窗问是否下载安装(每次都弹,不受「暂不」记忆影响)
+                confirmFromStartup = false
                 _showInstallConfirm.value = info != null
             } catch (e: Exception) {
                 // 异常类名带上,空 message 的网络异常也能定位
@@ -85,7 +107,23 @@ class UpdateViewModel @Inject constructor(
         }
     }
 
+    /** 「下载并安装」:关弹窗并开始下载(不记忆该版本) */
+    fun confirmInstall() {
+        confirmFromStartup = false
+        _showInstallConfirm.value = false
+    }
+
+    /** 「暂不」:关弹窗;启动来源记住该版本(下次冷启动不再弹,仅 Snackbar) */
     fun dismissInstallConfirm() {
+        if (confirmFromStartup) {
+            (_state.value as? UpdateState.Available)?.info?.let { info ->
+                if (info.tagName.isNotBlank()) {
+                    dismissedTag = info.tagName
+                    viewModelScope.launch { settings.saveUpdateDismissedTag(info.tagName) }
+                }
+            }
+        }
+        confirmFromStartup = false
         _showInstallConfirm.value = false
     }
 

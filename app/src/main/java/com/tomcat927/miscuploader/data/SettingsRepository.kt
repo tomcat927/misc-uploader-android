@@ -53,6 +53,7 @@ class SettingsRepository @Inject constructor(
         val PASSWORD_CIPHER = stringPreferencesKey("password_cipher")
         val UPLOAD_MODE = stringPreferencesKey("upload_mode")
         val STARTUP_UPDATE_CHECK = booleanPreferencesKey("startup_update_check")
+        val UPDATE_DISMISSED_TAG = stringPreferencesKey("update_dismissed_tag")
     }
 
     /** 上传模式流(默认手动) */
@@ -81,6 +82,16 @@ class SettingsRepository @Inject constructor(
     suspend fun saveStartupUpdateCheck(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.STARTUP_UPDATE_CHECK] = enabled
+        }
+    }
+
+    /** 启动弹窗被「暂不」的版本 tag(每版本只弹一次确认框) */
+    suspend fun updateDismissedTagOnce(): String =
+        context.dataStore.data.first()[Keys.UPDATE_DISMISSED_TAG].orEmpty()
+
+    suspend fun saveUpdateDismissedTag(tag: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.UPDATE_DISMISSED_TAG] = tag
         }
     }
 

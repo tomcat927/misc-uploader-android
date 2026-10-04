@@ -6,6 +6,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -13,8 +14,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -25,6 +28,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tomcat927.miscuploader.ui.home.HomeScreen
 import com.tomcat927.miscuploader.ui.queue.QueueScreen
 import com.tomcat927.miscuploader.ui.settings.SettingsScreen
+import com.tomcat927.miscuploader.ui.update.UpdateState
 import com.tomcat927.miscuploader.ui.update.UpdateViewModel
 
 /**
@@ -41,12 +45,15 @@ fun MainScreen() {
     var tab by rememberSaveable { mutableStateOf(MainTab.FILES) }
     val snackbarHostState = remember { SnackbarHostState() }
     val updateViewModel: UpdateViewModel = viewModel()
+    val updateState by updateViewModel.state.collectAsState()
+    val showInstallConfirm by updateViewModel.showInstallConfirm.collectAsState()
 
-    // 启动检查更新发现新版本 → 任意 tab 顶部提示(设置卡片同时显示「发现新版本」)
+    // 启动检查发现新版:未「暂不」过该版本 → 弹确认框;否则降级 Snackbar
     LaunchedEffect(Unit) {
-        updateViewModel.foundEvents.collect { info ->
-            snackbarHostState.showSnackbar("发现新版本 ${info.tagName}，可在「设置 → 应用更新」下载安装")
-        }
+        updateViewModel.foundEvents.collect { updateViewModel.onStartupUpdateFound(it) }
+    }
+    LaunchedEffect(Unit) {
+        updateViewModel.snackEvents.collect { snackbarHostState.showSnackbar(it) }
     }
 
     Scaffold(
@@ -79,6 +86,29 @@ fun MainScreen() {
                 MainTab.QUEUE -> QueueScreen()
                 MainTab.SETTINGS -> SettingsScreen()
             }
+        }
+    }
+
+    // 发现新版本确认框(主动检查/启动发现共用,任意 tab 可见):
+    // 确认即自动下载;「暂不」后卡片内按钮仍可用(启动来源会记住该版本不再弹)
+    if (showInstallConfirm) {
+        (updateState as? UpdateState.Available)?.let { s ->
+            AlertDialog(
+                onDismissRequest = updateViewModel::dismissInstallConfirm,
+                title = { Text("发现新版本") },
+                text = {
+                    Text("最新版本 ${s.info.tagName}，是否下载安装？" + (s.info.releaseNotes?.let { "\n\n$it" } ?: ""))
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        updateViewModel.confirmInstall()
+                        updateViewModel.download()
+                    }) { Text("下载并安装") }
+                },
+                dismissButton = {
+                    TextButton(onClick = updateViewModel::dismissInstallConfirm) { Text("暂不") }
+                },
+            )
         }
     }
 }
