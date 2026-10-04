@@ -183,6 +183,9 @@ class UploadRepository @Inject constructor(
 
     suspend fun markHashing(id: Long) = dao.markHashing(id)
 
+    /** hash 完成且未命中去重 → 切回 uploading 进入 PUT */
+    suspend fun markUploading(id: Long) = dao.markUploading(id, System.currentTimeMillis())
+
     suspend fun setSha256(id: Long, sha: String) = dao.setSha256(id, sha)
 
     suspend fun findHistoryBySha(sha: String): HistoryEntity? = dao.findHistoryBySha(sha)

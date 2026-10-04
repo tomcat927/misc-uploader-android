@@ -115,7 +115,7 @@ class UploadService : Service() {
             repository.markSkipped(item.id, "同内容已存在：${existing.remotePath}")
             return
         }
-        repository.markUploading(item.id, System.currentTimeMillis())
+        repository.markUploading(item.id)
 
         logger.log("upload", "开始 ${item.displayName}（${file.length()} B → ${item.remotePath}）")
         try {
