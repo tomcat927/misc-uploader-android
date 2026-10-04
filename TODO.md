@@ -47,8 +47,8 @@
 4. **D1 PiGallery2 深链**: 远程目录面包屑旁按钮 → 浏览器打开 PiGallery2 对应路径(约半天)
 5. **B misc-uploader 桌面端纯 REST 重构**: 依据 tianyi-misc-repo `docs/client-protocol-decision.md`;建议等实测把 REST 细节验证完再动
 6. 设置项补齐: 并发数 / 最大重试 / 仅 Wi-Fi / 默认分享目录
-7. **诊断页补课**: README 已宣称"上传日志+退出原因"但**未实现**——需 AppLogger(文件 ring)+ 设置页诊断卡,或先修正 README
-8. 低优先: POST_NOTIFICATIONS 运行时请求 / R8 / OkHttp 5.x 评估 / Room DAO 测试(Robolectric) / 启动静默更新检查 / keystore 源文件改名(带应用名,涉及 Notion 容灾页内文同步)
+7. ~~诊断页补课~~ ✅ 已实现(M4): AppLogger 文件 ring(连接/入队/上传/失败/重试全打点)+ 设置页诊断卡(日志+ApplicationExitInfo)——2026-10-04 核实打点齐全,原"未实现"描述过时
+8. 低优先: POST_NOTIFICATIONS 运行时请求 / R8 / OkHttp 5.x 评估 / Room DAO 测试(Robolectric) / keystore 源文件改名(带应用名,涉及 Notion 容灾页内文同步)
 9. 热更新增强(可选): ~~启动静默检查~~ ✅ 2026-10-04(改为应用内 Snackbar 提示,系统通知因 POST_NOTIFICATIONS 未请求不做);剩 下载改 WorkManager(杀进程续传)
 
 ## 已知坑(全量见 AGENTS.md;Notion 侧见 notion-mcp-setup TROUBLESHOOTING)
