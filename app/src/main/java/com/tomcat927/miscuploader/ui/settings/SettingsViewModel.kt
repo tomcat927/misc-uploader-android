@@ -42,6 +42,8 @@ data class SettingsUiState(
     val connectedRootCount: Int? = null,
     /** PiGallery2 地址(D1,可选;空 = 不显示相册按钮) */
     val pigalleryBase: String = "",
+    /** 分享接收目标目录(手动模式,拍板 2026-10-04;默认仓库根) */
+    val defaultShareDir: String = "",
     val diagnostics: DiagnosticsUiState = DiagnosticsUiState(),
 )
 
@@ -94,6 +96,10 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             val base = settings.pigalleryBaseFlow.first()
             _uiState.update { it.copy(pigalleryBase = base) }
+        }
+        viewModelScope.launch {
+            val dir = settings.loadDefaultShareDirOnce()
+            _uiState.update { it.copy(defaultShareDir = dir) }
         }
     }
 
@@ -213,6 +219,42 @@ class SettingsViewModel @Inject constructor(
         if (!pigalleryDirty) return
         pigalleryDirty = false
         viewModelScope.launch { settings.savePigalleryBase(_uiState.value.pigalleryBase) }
+    }
+
+    // ---- 上传设置(拍板 2026-10-04:并发/最大重试/仅 Wi-Fi/默认分享目录) ----
+
+    val uploadConcurrency: StateFlow<Int> = settings.uploadConcurrencyFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 2)
+
+    val uploadMaxRetries: StateFlow<Int> = settings.uploadMaxRetriesFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 3)
+
+    val wifiOnly: StateFlow<Boolean> = settings.wifiOnlyFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setUploadConcurrency(value: Int) {
+        viewModelScope.launch { settings.saveUploadConcurrency(value) }
+    }
+
+    fun setUploadMaxRetries(value: Int) {
+        viewModelScope.launch { settings.saveUploadMaxRetries(value) }
+    }
+
+    fun setWifiOnly(enabled: Boolean) {
+        viewModelScope.launch { settings.saveWifiOnly(enabled) }
+    }
+
+    private var shareDirDirty = false
+
+    fun onShareDirChange(value: String) {
+        shareDirDirty = true
+        _uiState.update { it.copy(defaultShareDir = value) }
+    }
+
+    fun commitShareDir() {
+        if (!shareDirDirty) return
+        shareDirDirty = false
+        viewModelScope.launch { settings.saveDefaultShareDir(_uiState.value.defaultShareDir) }
     }
 
     // ---- 诊断(M4:零本地环境下的排查窗口) ----

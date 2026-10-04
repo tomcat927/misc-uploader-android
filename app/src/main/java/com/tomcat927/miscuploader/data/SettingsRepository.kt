@@ -3,6 +3,7 @@ package com.tomcat927.miscuploader.data
 import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -57,6 +58,10 @@ class SettingsRepository @Inject constructor(
         val TOUCH_FOCUS = booleanPreferencesKey("touch_focus")
         val SHOW_HIDDEN = booleanPreferencesKey("show_hidden")
         val PIGALLERY_BASE = stringPreferencesKey("pigallery_base")
+        val UPLOAD_CONCURRENCY = intPreferencesKey("upload_concurrency")
+        val UPLOAD_MAX_RETRIES = intPreferencesKey("upload_max_retries")
+        val UPLOAD_WIFI_ONLY = booleanPreferencesKey("upload_wifi_only")
+        val DEFAULT_SHARE_DIR = stringPreferencesKey("default_share_dir")
     }
 
     /** 上传模式流(默认手动) */
@@ -128,6 +133,58 @@ class SettingsRepository @Inject constructor(
     suspend fun savePigalleryBase(url: String) {
         context.dataStore.edit { prefs ->
             prefs[Keys.PIGALLERY_BASE] = url.trim()
+        }
+    }
+
+    // ---- 上传设置(拍板 2026-10-04;并发/最大重试改动下次队列启动生效) ----
+
+    /** 上传并发数(默认 2,范围 1–4) */
+    val uploadConcurrencyFlow: Flow<Int> = context.dataStore.data.map { prefs ->
+        (prefs[Keys.UPLOAD_CONCURRENCY] ?: 2).coerceIn(1, 4)
+    }
+
+    suspend fun loadUploadConcurrencyOnce(): Int = uploadConcurrencyFlow.first()
+
+    suspend fun saveUploadConcurrency(value: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.UPLOAD_CONCURRENCY] = value.coerceIn(1, 4)
+        }
+    }
+
+    /** 最大重试次数(默认 3,范围 0–5;退避序列仍为 2s/8s/30s,超出封顶 30s) */
+    val uploadMaxRetriesFlow: Flow<Int> = context.dataStore.data.map { prefs ->
+        (prefs[Keys.UPLOAD_MAX_RETRIES] ?: 3).coerceIn(0, 5)
+    }
+
+    suspend fun loadUploadMaxRetriesOnce(): Int = uploadMaxRetriesFlow.first()
+
+    suspend fun saveUploadMaxRetries(value: Int) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.UPLOAD_MAX_RETRIES] = value.coerceIn(0, 5)
+        }
+    }
+
+    /** 仅 Wi-Fi 上传(默认关;开启后蜂窝网络下队列暂停,恢复 Wi-Fi 自动续跑) */
+    val wifiOnlyFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.UPLOAD_WIFI_ONLY] ?: false
+    }
+
+    suspend fun saveWifiOnly(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.UPLOAD_WIFI_ONLY] = enabled
+        }
+    }
+
+    /** 分享接收目标目录(手动模式;默认仓库根 "/";自动归类模式不受影响) */
+    val defaultShareDirFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        normalizeDir(prefs[Keys.DEFAULT_SHARE_DIR] ?: "/")
+    }
+
+    suspend fun loadDefaultShareDirOnce(): String = defaultShareDirFlow.first()
+
+    suspend fun saveDefaultShareDir(dir: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.DEFAULT_SHARE_DIR] = normalizeDir(dir)
         }
     }
 

@@ -55,6 +55,9 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
     val uploadMode by viewModel.uploadMode.collectAsState()
     val touchFocus by viewModel.touchFocus.collectAsState()
     val showHidden by viewModel.showHidden.collectAsState()
+    val uploadConcurrency by viewModel.uploadConcurrency.collectAsState()
+    val uploadMaxRetries by viewModel.uploadMaxRetries.collectAsState()
+    val wifiOnly by viewModel.wifiOnly.collectAsState()
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("设置") }) },
@@ -177,10 +180,84 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 onSelect = viewModel::setUploadMode,
             )
 
+            UploadSettingsCard(
+                concurrency = uploadConcurrency,
+                maxRetries = uploadMaxRetries,
+                wifiOnly = wifiOnly,
+                defaultShareDir = state.defaultShareDir,
+                onConcurrency = viewModel::setUploadConcurrency,
+                onMaxRetries = viewModel::setUploadMaxRetries,
+                onWifiOnly = viewModel::setWifiOnly,
+                onShareDirChange = viewModel::onShareDirChange,
+                onShareDirCommit = viewModel::commitShareDir,
+            )
+
             DiagnosticsCard(
                 state = state.diagnostics,
                 onToggle = viewModel::toggleDiagnostics,
                 onRefresh = viewModel::loadDiagnostics,
+            )
+        }
+    }
+}
+
+/** 上传设置(拍板 2026-10-04:并发/最大重试/仅 Wi-Fi/默认分享目录) */
+@Composable
+private fun UploadSettingsCard(
+    concurrency: Int,
+    maxRetries: Int,
+    wifiOnly: Boolean,
+    defaultShareDir: String,
+    onConcurrency: (Int) -> Unit,
+    onMaxRetries: (Int) -> Unit,
+    onWifiOnly: (Boolean) -> Unit,
+    onShareDirChange: (String) -> Unit,
+    onShareDirCommit: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("上传设置", style = MaterialTheme.typography.titleSmall)
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("并发数", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(76.dp))
+                listOf(1, 2, 3, 4).forEach { n ->
+                    FilterChip(selected = concurrency == n, onClick = { onConcurrency(n) }, label = { Text("$n") })
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("最大重试", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(76.dp))
+                listOf(0, 1, 2, 3, 5).forEach { n ->
+                    FilterChip(selected = maxRetries == n, onClick = { onMaxRetries(n) }, label = { Text("$n") })
+                }
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("仅 Wi-Fi 上传", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "开启后蜂窝网络下队列暂停，连上 Wi-Fi 自动续跑",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = wifiOnly, onCheckedChange = onWifiOnly)
+            }
+
+            CommitOnFocusLost(onShareDirCommit) {
+                OutlinedTextField(
+                    value = defaultShareDir,
+                    onValueChange = onShareDirChange,
+                    label = { Text("分享接收目标目录") },
+                    supportingText = { Text("手动模式下系统分享进来的文件落此目录；自动归类模式仍按日期归 auto/年/月") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            Text(
+                "并发数与最大重试在下次队列启动时生效",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

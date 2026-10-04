@@ -80,7 +80,8 @@ class UploadRepository @Inject constructor(
         val target = if (mode == UploadMode.AUTO_DATE) {
             UploadPlanning.autoDirFor(System.currentTimeMillis())
         } else {
-            "/"
+            // 手动模式分享目标可配(拍板 2026-10-04,默认仓库根)
+            settings.loadDefaultShareDirOnce()
         }
         val now = System.currentTimeMillis()
         val items = uris.mapNotNull { uri ->

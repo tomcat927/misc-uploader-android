@@ -14,9 +14,12 @@ import androidx.core.app.ServiceCompat
 import com.tomcat927.miscuploader.MainActivity
 import com.tomcat927.miscuploader.core.OpenListApiException
 import com.tomcat927.miscuploader.data.ConnectionManager
+import com.tomcat927.miscuploader.data.SettingsRepository
 import com.tomcat927.miscuploader.data.UploadRepository
 import com.tomcat927.miscuploader.data.db.UploadItemEntity
 import com.tomcat927.miscuploader.data.db.UploadState
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import dagger.hilt.android.AndroidEntryPoint
 import java.io.File
 import javax.inject.Inject
@@ -26,6 +29,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -34,9 +38,10 @@ import kotlinx.coroutines.sync.withLock
 /**
  * 上传队列前台服务(拍板:dataSync 类型 + Room 唯一真相源)。
  *
- * - 并发 worker 2 个(可配置化留 V1.1);claim 用 Mutex 串行化(单进程内足够)
- * - 失败退避 2s/8s/30s 共 3 次重试(沿用桌面端拍板),冷却在 worker 内 delay
- * - 服务被杀/重启:启动时把 uploading/cooldown 重置为 pending,从 Room 续跑
+ * - 并发 worker 可配(设置页 1–4,默认 2;服务启动时读取,改动下次队列启动生效);claim 用 Mutex 串行化
+ * - 失败重试次数可配(默认 3,退避 2s/8s/30s 超出封顶);冷却在 worker 内 delay
+ * - 仅 Wi-Fi(拍板 2026-10-04):开启后非 Wi-Fi 下 worker 网关轮询暂停,恢复自动续跑(即时生效)
+ * - 服务被杀/重启:启动时把 hashing/uploading/cooldown 重置为 pending,从 Room 续跑
  * - 上传成功后对目标目录 list(refresh=true) 触发 OpenList 增量索引(拍板,尽力而为)
  */
 @AndroidEntryPoint
@@ -46,13 +51,16 @@ class UploadService : Service() {
 
     @Inject lateinit var connectionManager: ConnectionManager
 
+    @Inject lateinit var settings: SettingsRepository
+
     @Inject lateinit var logger: com.tomcat927.miscuploader.data.AppLogger
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val claimMutex = Mutex()
-    private val workers = 2
     private val backoffMillis = longArrayOf(2_000L, 8_000L, 30_000L)
     private var running = false
+    private var maxRetries = 3
+    private var wifiGateLogged = false
     private var notificationJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -68,19 +76,42 @@ class UploadService : Service() {
 
         if (!running) {
             running = true
-            serviceScope.launch { repository.resetInterrupted() }
-            observeQueueForNotification()
-            repeat(workers) { serviceScope.launch { workerLoop() } }
+            serviceScope.launch {
+                repository.resetInterrupted()
+                maxRetries = settings.loadUploadMaxRetriesOnce()
+                observeQueueForNotification()
+                repeat(settings.loadUploadConcurrencyOnce()) { serviceScope.launch { workerLoop() } }
+            }
         }
         return START_NOT_STICKY
     }
 
     private suspend fun workerLoop() {
         while (serviceScope.isActive) {
+            if (!wifiAllowed()) {
+                if (!wifiGateLogged) {
+                    wifiGateLogged = true
+                    logger.log("service", "仅 Wi-Fi 上传：当前非 Wi-Fi，队列暂停")
+                }
+                delay(15_000L)
+                continue
+            }
+            if (wifiGateLogged) {
+                wifiGateLogged = false
+                logger.log("service", "Wi-Fi 已恢复，队列续跑")
+            }
             val item = claimMutex.withLock { repository.claimNext() } ?: break
             process(item)
         }
         tryStop()
+    }
+
+    /** 仅 Wi-Fi 网关:开关关闭恒放行;开关开启时读实时网络状态(每轮/每 15s 轮询,即时生效) */
+    private suspend fun wifiAllowed(): Boolean {
+        if (!settings.wifiOnlyFlow.first()) return true
+        val manager = getSystemService(ConnectivityManager::class.java)
+        val caps = manager.getNetworkCapabilities(manager.activeNetwork)
+        return caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
     }
 
     private suspend fun process(item: UploadItemEntity) {
@@ -143,10 +174,10 @@ class UploadService : Service() {
 
     private suspend fun handleFailure(item: UploadItemEntity, message: String) {
         val retries = item.retries + 1
-        if (retries <= backoffMillis.size) {
-            val wait = backoffMillis[retries - 1]
-            logger.log("upload", "失败 ${item.displayName}：$message（${retries}/${backoffMillis.size}，${wait / 1000}s 后重试）")
-            repository.enterCooldown(item.id, "$message（${retries}/${backoffMillis.size} 次重试，${wait / 1000}s 后重试）")
+        if (retries <= maxRetries) {
+            val wait = backoffMillis[(retries - 1).coerceAtMost(backoffMillis.size - 1)]
+            logger.log("upload", "失败 ${item.displayName}：$message（$retries/$maxRetries，${wait / 1000}s 后重试）")
+            repository.enterCooldown(item.id, "$message（$retries/$maxRetries 次重试，${wait / 1000}s 后重试）")
             delay(wait)
             repository.requeue(item.id, retries)
         } else {
