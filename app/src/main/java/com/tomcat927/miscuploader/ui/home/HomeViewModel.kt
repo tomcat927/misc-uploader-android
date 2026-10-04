@@ -562,7 +562,15 @@ class HomeViewModel @Inject constructor(
 
     private suspend fun listLocal(path: String): List<FileItem> = withContext(Dispatchers.IO) {
         val files = File(path).listFiles()
-            ?: throw IOException("无法读取该目录（系统目录或权限不足）")
+            ?: throw IOException(
+                if (path.contains("Android/data") || path.contains("Android/obb")) {
+                    "Android 11+ 系统限制：普通应用（含「所有文件访问」权限）无法读取此目录
+" +
+                        "可在原应用或其他文件管理器里选中文件「分享到杂物上传」"
+                } else {
+                    "无法读取该目录（系统目录或权限不足）"
+                },
+            )
         files.map { f ->
             FileItem(
                 name = f.name,
