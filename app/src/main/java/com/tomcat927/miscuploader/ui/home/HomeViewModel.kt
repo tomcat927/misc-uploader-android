@@ -66,8 +66,8 @@ class HomeViewModel @Inject constructor(
 
     private val _leftCategory = MutableStateFlow(FileCategory.ALL)
     private val _rightCategory = MutableStateFlow(FileCategory.ALL)
-    private val _leftSort = MutableStateFlow(SortSpec())
-    private val _rightSort = MutableStateFlow(SortSpec())
+    private val _leftSort = MutableStateFlow(SortSpec(SortField.NAME))
+    private val _rightSort = MutableStateFlow(SortSpec(SortField.NAME))
 
     val leftCategory: StateFlow<FileCategory> = _leftCategory.asStateFlow()
     val rightCategory: StateFlow<FileCategory> = _rightCategory.asStateFlow()
