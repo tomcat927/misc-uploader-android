@@ -119,6 +119,29 @@ class HomeViewModel @Inject constructor(
         _expandedSide.value = null
     }
 
+    // ---- 系统返回键(拍板 2026-10-04:四级返回链,README 使用说明同步) ----
+
+    /**
+     * 返回键逐级消费:单侧展开→收起双栏 → 多选→退出多选 → 聚焦侧子目录→返回上级。
+     * @return true = 已消费;false = 未消费(两级都在根目录,交由 MainScreen 二次确认退出)
+     */
+    fun onBackConsumed(): Boolean {
+        if (_expandedSide.value != null) {
+            collapse()
+            return true
+        }
+        if (selectionMode) {
+            clearSelection()
+            return true
+        }
+        val side = _focusedSide.value
+        if (breadcrumbOf(side, stateOf(side).path).size > 1) {
+            navigateUp(side)
+            return true
+        }
+        return false
+    }
+
     // ---- 多选与上传(M3) ----
 
     /** 长按进入多选并选中该项 */
