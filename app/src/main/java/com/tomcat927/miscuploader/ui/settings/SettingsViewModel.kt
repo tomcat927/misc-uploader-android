@@ -275,4 +275,11 @@ class SettingsViewModel @Inject constructor(
             }
         }
     }
+
+    fun clearDiagnostics() {
+        viewModelScope.launch {
+            logger.clear()
+            loadDiagnostics()
+        }
+    }
 }

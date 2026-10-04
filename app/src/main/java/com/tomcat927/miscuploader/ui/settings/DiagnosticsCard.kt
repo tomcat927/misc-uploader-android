@@ -32,6 +32,7 @@ fun DiagnosticsCard(
     state: DiagnosticsUiState,
     onToggle: () -> Unit,
     onRefresh: () -> Unit,
+    onClear: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -52,6 +53,7 @@ fun DiagnosticsCard(
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = onRefresh, enabled = !state.loading) { Text("刷新") }
+                    TextButton(onClick = onClear, enabled = !state.loading) { Text("清空") }
                     TextButton(
                         onClick = {
                             clipboard.setText(

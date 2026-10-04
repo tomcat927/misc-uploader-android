@@ -55,6 +55,16 @@ class AppLogger @Inject constructor(
         }.getOrDefault("（读取失败）")
     }
 
+    /** 清空日志(诊断页按钮;清空本身也记一条,保证文件不为空) */
+    suspend fun clear() = withContext(Dispatchers.IO) {
+        synchronized(fileLock) {
+            runCatching {
+                logFile.writeText("")
+            }
+        }
+        log("diag", "日志已清空")
+    }
+
     private fun timestamp(): String = SimpleDateFormat("MM-dd HH:mm:ss", Locale.CHINA).format(Date())
 
     private companion object {

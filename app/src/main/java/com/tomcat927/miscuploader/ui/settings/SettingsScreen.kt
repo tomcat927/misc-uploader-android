@@ -196,6 +196,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 state = state.diagnostics,
                 onToggle = viewModel::toggleDiagnostics,
                 onRefresh = viewModel::loadDiagnostics,
+                onClear = viewModel::clearDiagnostics,
             )
         }
     }
