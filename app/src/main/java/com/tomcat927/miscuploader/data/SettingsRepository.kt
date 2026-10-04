@@ -54,6 +54,7 @@ class SettingsRepository @Inject constructor(
         val UPLOAD_MODE = stringPreferencesKey("upload_mode")
         val STARTUP_UPDATE_CHECK = booleanPreferencesKey("startup_update_check")
         val UPDATE_DISMISSED_TAG = stringPreferencesKey("update_dismissed_tag")
+        val TOUCH_FOCUS = booleanPreferencesKey("touch_focus")
     }
 
     /** 上传模式流(默认手动) */
@@ -92,6 +93,17 @@ class SettingsRepository @Inject constructor(
     suspend fun saveUpdateDismissedTag(tag: String) {
         context.dataStore.edit { prefs ->
             prefs[Keys.UPDATE_DISMISSED_TAG] = tag
+        }
+    }
+
+    /** 双栏触摸聚焦开关(拍板 2026-10-04:默认开;关闭=两栏恒单列,点击只变高亮不改布局) */
+    val touchFocusFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.TOUCH_FOCUS] ?: true
+    }
+
+    suspend fun saveTouchFocus(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.TOUCH_FOCUS] = enabled
         }
     }
 

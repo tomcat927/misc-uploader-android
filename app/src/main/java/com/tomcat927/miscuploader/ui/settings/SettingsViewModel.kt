@@ -175,6 +175,15 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settings.saveUploadMode(mode) }
     }
 
+    // ---- 双栏触摸聚焦(2026-10-04 拍板:可关,默认开) ----
+
+    val touchFocus: StateFlow<Boolean> = settings.touchFocusFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
+    fun setTouchFocus(enabled: Boolean) {
+        viewModelScope.launch { settings.saveTouchFocus(enabled) }
+    }
+
     // ---- 诊断(M4:零本地环境下的排查窗口) ----
 
     fun toggleDiagnostics() {

@@ -85,6 +85,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val storageGranted by viewModel.storageGranted.collectAsState()
     val selectedLeft by viewModel.selectedLeft.collectAsState()
     val uploadMode by viewModel.uploadMode.collectAsState()
+    val touchFocus by viewModel.touchFocus.collectAsState()
     val viewerRequest by viewModel.viewerRequest.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var mkdirSide by remember { mutableStateOf<Side?>(null) }
@@ -119,6 +120,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 side = Side.LEFT,
                 state = left,
                 isFocused = focused == Side.LEFT,
+                focusEnabled = touchFocus,
                 storageGranted = storageGranted,
                 breadcrumb = viewModel.breadcrumbOf(Side.LEFT, left.path),
                 selectionMode = selectedLeft.isNotEmpty(),
@@ -149,6 +151,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 side = Side.RIGHT,
                 state = right,
                 isFocused = focused == Side.RIGHT,
+                focusEnabled = touchFocus,
                 storageGranted = true,
                 breadcrumb = viewModel.breadcrumbOf(Side.RIGHT, right.path),
                 selectionMode = false,
@@ -234,6 +237,7 @@ private fun BrowserPane(
     side: Side,
     state: BrowserState,
     isFocused: Boolean,
+    focusEnabled: Boolean,
     storageGranted: Boolean,
     breadcrumb: List<String>,
     selectionMode: Boolean,
@@ -282,7 +286,8 @@ private fun BrowserPane(
 
         Box(Modifier.weight(1f)) {
             when {
-                isFocused -> FocusedFileList(
+                // 聚焦机制关闭(拍板 2026-10-04)或本栏聚焦 → 单列;仅开启且非聚焦 → 两列总览
+                !focusEnabled || isFocused -> FocusedFileList(
                     state, breadcrumb.size > 1, onNavigate, onNavigateUp,
                     onItemLongPress = onItemLongPress, selectionMode = selectionMode, selected = selected,
                     onItemToggleSelect = onItemToggleSelect, onOpenFile = onOpenFile,

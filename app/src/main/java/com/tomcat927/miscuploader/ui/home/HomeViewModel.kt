@@ -75,6 +75,10 @@ class HomeViewModel @Inject constructor(
     val uploadMode: StateFlow<UploadMode> = settings.uploadModeFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UploadMode.MANUAL)
 
+    /** 双栏触摸聚焦开关(拍板 2026-10-04:默认开;关闭=两栏恒单列,点击不再切换布局) */
+    val touchFocus: StateFlow<Boolean> = settings.touchFocusFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
     init {
         recheckStoragePermission()
         refresh(Side.LEFT)

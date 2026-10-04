@@ -22,6 +22,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -52,6 +53,7 @@ import com.tomcat927.miscuploader.data.UploadMode
 fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
     val uploadMode by viewModel.uploadMode.collectAsState()
+    val touchFocus by viewModel.touchFocus.collectAsState()
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("设置") }) },
@@ -147,6 +149,11 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
 
             com.tomcat927.miscuploader.ui.update.UpdateCard()
 
+            TouchFocusCard(
+                enabled = touchFocus,
+                onToggle = viewModel::setTouchFocus,
+            )
+
             UploadModeCard(
                 mode = uploadMode,
                 onSelect = viewModel::setUploadMode,
@@ -161,10 +168,30 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
     }
 }
 
+/** 双栏触摸聚焦开关(拍板 2026-10-04:默认开;关闭=两栏恒单列,点击只变高亮不改布局) */
+@Composable
+private fun TouchFocusCard(enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("双栏触摸聚焦", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "开启：点哪栏哪栏变单列，另一栏两列总览；关闭：两栏均为单列，点击只变高亮",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = enabled, onCheckedChange = onToggle)
+        }
+    }
+}
+
 /** 上传模式(拍板 A2,对齐桌面端两种模式) */
 @Composable
-private fun UploadModeCard(mode: UploadMode, onSelect: (UploadMode) -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
+private fun UploadModeCard(mode: UploadMode, onSelect: (UploadMode) -> Unit) {    Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("上传模式", style = MaterialTheme.typography.titleSmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
