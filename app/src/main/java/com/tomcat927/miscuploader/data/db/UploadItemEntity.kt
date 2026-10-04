@@ -3,16 +3,17 @@ package com.tomcat927.miscuploader.data.db
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
-/** 队列状态机沿用桌面端拍板;hashing 状态留给 V1.1 去重,M3 不使用 */
+/** 队列状态机沿用桌面端拍板;hashing 状态 A1 启用(PUT 前流式 hash 去重) */
 object UploadState {
     const val PENDING = "pending"
+    const val HASHING = "hashing"
     const val UPLOADING = "uploading"
     const val COOLDOWN = "cooldown"
     const val DONE = "done"
     const val FAILED = "failed"
     const val SKIPPED = "skipped"
 
-    val IN_FLIGHT = listOf(PENDING, UPLOADING, COOLDOWN)
+    val IN_FLIGHT = listOf(PENDING, HASHING, UPLOADING, COOLDOWN)
     val FINISHED = listOf(DONE, FAILED, SKIPPED)
 }
 
@@ -34,4 +35,6 @@ data class UploadItemEntity(
     val enqueuedAt: Long,
     val startedAt: Long? = null,
     val finishedAt: Long? = null,
+    /** 内容 SHA-256(A1:worker 在 PUT 前计算,重试轮复用判断) */
+    val sha256: String? = null,
 )

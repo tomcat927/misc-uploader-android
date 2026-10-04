@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.tomcat927.miscuploader.data.db.HistoryEntity
 import com.tomcat927.miscuploader.data.db.UploadDao
 import com.tomcat927.miscuploader.data.db.UploadItemEntity
 import com.tomcat927.miscuploader.data.db.UploadState
@@ -33,6 +34,9 @@ class UploadRepository @Inject constructor(
 ) {
 
     val items: Flow<List<UploadItemEntity>> = dao.observeAll()
+
+    /** 上传历史(A1):sha→最新落点,展示最近 500 条(库存上限一万,自动修剪) */
+    val history: Flow<List<HistoryEntity>> = dao.observeRecentHistory(limit = 500)
 
     /**
      * 入队并拉起前台服务(拍板 A2:目标目录在入队侧规划——手动模式 = 所选目录,
@@ -174,6 +178,28 @@ class UploadRepository @Inject constructor(
     suspend fun requeue(id: Long, retries: Int) = dao.requeue(id, retries)
 
     suspend fun activeCount(): Int = dao.activeCount()
+
+    // ---- A1 去重与历史 ----
+
+    suspend fun markHashing(id: Long) = dao.markHashing(id)
+
+    suspend fun setSha256(id: Long, sha: String) = dao.setSha256(id, sha)
+
+    suspend fun findHistoryBySha(sha: String): HistoryEntity? = dao.findHistoryBySha(sha)
+
+    /** 上传成功记录历史(sha→最新落点,REPLACE 语义);超上限修剪最旧 */
+    suspend fun recordHistory(sha: String, remotePath: String, displayName: String, size: Long) {
+        dao.upsertHistory(
+            HistoryEntity(
+                sha256 = sha,
+                remotePath = remotePath,
+                displayName = displayName,
+                size = size,
+                uploadedAt = System.currentTimeMillis(),
+            ),
+        )
+        dao.trimHistory(HistoryEntity.MAX_ENTRIES)
+    }
 
     private suspend fun resolveDisplayName(uri: Uri): String {
         context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->

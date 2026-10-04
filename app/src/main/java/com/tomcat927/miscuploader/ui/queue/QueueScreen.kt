@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -27,6 +28,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
@@ -36,9 +40,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tomcat927.miscuploader.data.UploadRepository
+import com.tomcat927.miscuploader.data.db.HistoryEntity
 import com.tomcat927.miscuploader.data.db.UploadItemEntity
 import com.tomcat927.miscuploader.data.db.UploadState
 import dagger.hilt.android.lifecycle.HiltViewModel
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -51,14 +59,18 @@ class QueueViewModel @Inject constructor(
 ) : ViewModel() {
 
     /**
-     * 拍板(对齐桌面端):进行中(pending/uploading/cooldown)按入队序置顶;
+     * 拍板(对齐桌面端):进行中(pending/hash/uploading/cooldown)按入队序置顶;
      * 已完成(done/failed/skipped)按完成时间最新在前。
      */
     val items: StateFlow<List<UploadItemEntity>> = repository.items
         .map { list ->
-            val (inFlight, finished) = list.partition { it.state in UploadState.FINISHED }
+            val (inFlight, finished) = list.partition { it.state !in UploadState.FINISHED }
             inFlight.sortedBy { it.enqueuedAt } + finished.sortedByDescending { it.finishedAt ?: it.enqueuedAt }
         }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 上传历史(A1):sha→最新落点,展示最近 500 条 */
+    val history: StateFlow<List<HistoryEntity>> = repository.history
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun retry(id: Long) = repository.retry(id)
@@ -68,9 +80,17 @@ class QueueViewModel @Inject constructor(
     fun clearFinished() = repository.clearFinished()
 }
 
+/** 队列页视图(A1):进行中队列 / 上传历史 */
+private enum class QueueView(val label: String) {
+    QUEUE("队列"),
+    HISTORY("历史"),
+}
+
 @Composable
 fun QueueScreen(viewModel: QueueViewModel = viewModel()) {
     val items by viewModel.items.collectAsState()
+    val history by viewModel.history.collectAsState()
+    var view by rememberSaveable { mutableStateOf(QueueView.QUEUE) }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -79,46 +99,140 @@ fun QueueScreen(viewModel: QueueViewModel = viewModel()) {
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("上传队列", style = MaterialTheme.typography.titleLarge)
+            Text(
+                if (view == QueueView.QUEUE) "上传队列" else "上传历史",
+                style = MaterialTheme.typography.titleLarge,
+            )
             Spacer(Modifier.weight(1f))
-            TextButton(onClick = viewModel::retryAllFailed, enabled = items.any { it.state == UploadState.FAILED }) {
-                Text("重试全部失败")
-            }
-            TextButton(onClick = viewModel::clearFinished, enabled = items.any { it.state in UploadState.FINISHED }) {
-                Text("清除已完成")
-            }
+            FilterChip(
+                selected = view == QueueView.QUEUE,
+                onClick = { view = QueueView.QUEUE },
+                label = { Text(QueueView.QUEUE.label) },
+            )
+            Spacer(Modifier.width(8.dp))
+            FilterChip(
+                selected = view == QueueView.HISTORY,
+                onClick = { view = QueueView.HISTORY },
+                label = { Text(QueueView.HISTORY.label) },
+            )
         }
         HorizontalDivider()
 
-        if (items.isEmpty()) {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text(
-                    "队列为空\n在「文件」页长按文件进入多选，点「上传」",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
+        when (view) {
+            QueueView.QUEUE -> QueueList(
+                items = items,
+                onRetryAllFailed = viewModel::retryAllFailed,
+                onClearFinished = viewModel::clearFinished,
+                onRetry = viewModel::retry,
+            )
+
+            QueueView.HISTORY -> HistoryList(history)
+        }
+    }
+}
+
+@Composable
+private fun QueueList(
+    items: List<UploadItemEntity>,
+    onRetryAllFailed: () -> Unit,
+    onClearFinished: () -> Unit,
+    onRetry: (Long) -> Unit,
+) {
+    if (items.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                "队列为空\n在「文件」页长按文件进入多选，点「上传」",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
+        return
+    }
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+        ) {
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onRetryAllFailed, enabled = items.any { it.state == UploadState.FAILED }) {
+                Text("重试全部失败")
             }
-        } else {
-            LazyColumn(Modifier.weight(1f)) {
-                items(items, key = { it.id }) { item ->
-                    QueueRow(
-                        item = item,
-                        onRetry = { viewModel.retry(item.id) },
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                }
+            TextButton(onClick = onClearFinished, enabled = items.any { it.state in UploadState.FINISHED }) {
+                Text("清除已完成")
+            }
+        }
+        LazyColumn(Modifier.weight(1f)) {
+            items(items, key = { it.id }) { item ->
+                QueueRow(
+                    item = item,
+                    onRetry = { onRetry(item.id) },
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
             }
         }
     }
 }
 
 @Composable
+private fun HistoryList(history: List<HistoryEntity>) {
+    if (history.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                "暂无上传历史\n上传成功的内容会记录在这里（同内容再次上传将被跳过）",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
+        return
+    }
+    LazyColumn(Modifier.fillMaxSize()) {
+        items(history, key = { it.id }) { entry ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.Done,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(entry.displayName, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        entry.remotePath,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Text(
+                    HISTORY_DATE.format(Date(entry.uploadedAt)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+        }
+    }
+}
+
+private val HISTORY_DATE = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA)
+
+@Composable
 private fun QueueRow(item: UploadItemEntity, onRetry: () -> Unit) {
     val accent = when (item.state) {
         UploadState.DONE -> MaterialTheme.colorScheme.primary
         UploadState.FAILED -> MaterialTheme.colorScheme.error
-        UploadState.UPLOADING, UploadState.PENDING, UploadState.COOLDOWN -> MaterialTheme.colorScheme.tertiary
+        UploadState.UPLOADING, UploadState.PENDING, UploadState.COOLDOWN, UploadState.HASHING ->
+            MaterialTheme.colorScheme.tertiary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
@@ -180,6 +294,7 @@ private fun QueueRow(item: UploadItemEntity, onRetry: () -> Unit) {
 
 private fun stateLabel(state: String): String = when (state) {
     UploadState.PENDING -> "待上传"
+    UploadState.HASHING -> "校验中"
     UploadState.UPLOADING -> "上传中"
     UploadState.COOLDOWN -> "等待重试"
     UploadState.DONE -> "已完成"

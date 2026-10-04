@@ -98,6 +98,25 @@ class UploadService : Service() {
             repository.markSkipped(item.id, "本地文件不存在：${item.localPath}")
             return
         }
+
+        // A1 拍板:内容级去重——PUT 前流式 hash,同内容已上传过(任意目录)即跳过并提示已有路径
+        val sha = try {
+            repository.markHashing(item.id)
+            val digest = com.tomcat927.miscuploader.core.ContentHash.sha256(file)
+            repository.setSha256(item.id, digest)
+            digest
+        } catch (e: Exception) {
+            handleFailure(item, "读取文件失败：${e.message ?: e.javaClass.simpleName}")
+            return
+        }
+        val existing = repository.findHistoryBySha(sha)
+        if (existing != null) {
+            logger.log("upload", "去重命中：「${item.displayName}」= ${existing.remotePath}")
+            repository.markSkipped(item.id, "同内容已存在：${existing.remotePath}")
+            return
+        }
+        repository.markUploading(item.id, System.currentTimeMillis())
+
         logger.log("upload", "开始 ${item.displayName}（${file.length()} B → ${item.remotePath}）")
         try {
             // 逐级建目录(best-effort;A2 修正 M3 遗留——文件夹/auto 目录不存在时 PUT 必失败)
@@ -112,6 +131,7 @@ class UploadService : Service() {
                 }
             }
             repository.markDone(item.id)
+            repository.recordHistory(sha, item.remotePath, item.displayName, file.length())
             logger.log("upload", "完成 ${item.displayName}")
             refreshRemoteDir(item.remoteDir)
         } catch (e: OpenListApiException) {
@@ -159,9 +179,12 @@ class UploadService : Service() {
             repository.items.collect { items ->
                 val inFlight = items.filter { it.state in UploadState.IN_FLIGHT }
                 val done = items.count { it.state == UploadState.DONE }
-                val uploading = items.firstOrNull { it.state == UploadState.UPLOADING }
+                val active = items.firstOrNull { it.state == UploadState.UPLOADING || it.state == UploadState.HASHING }
                 val text = when {
-                    uploading != null -> "上传中 ${uploading.displayName}（$done 完成，${inFlight.size} 在队列）"
+                    active != null -> {
+                        val label = if (active.state == UploadState.HASHING) "校验中" else "上传中"
+                        "$label ${active.displayName}（$done 完成，${inFlight.size} 在队列）"
+                    }
                     inFlight.isNotEmpty() -> "等待上传 ${inFlight.size} 项（$done 完成）"
                     else -> "上传完成"
                 }
