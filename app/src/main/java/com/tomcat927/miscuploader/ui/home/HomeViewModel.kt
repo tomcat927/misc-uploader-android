@@ -174,6 +174,10 @@ class HomeViewModel @Inject constructor(
     val touchFocus: StateFlow<Boolean> = settings.touchFocusFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
+    /** PiGallery2 地址(D1:可选,空 = 远程栏不显示相册按钮) */
+    val pigalleryBase: StateFlow<String> = settings.pigalleryBaseFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), "")
+
     init {
         recheckStoragePermission()
         refresh(Side.LEFT)

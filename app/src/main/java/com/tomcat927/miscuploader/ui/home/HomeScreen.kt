@@ -38,6 +38,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
@@ -69,6 +70,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tomcat927.miscuploader.core.GalleryLink
 import com.tomcat927.miscuploader.data.UploadMode
 import com.tomcat927.miscuploader.ui.viewer.FileViewerDialog
 
@@ -87,7 +89,10 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val selectedRight by viewModel.selectedRight.collectAsState()
     val uploadMode by viewModel.uploadMode.collectAsState()
     val touchFocus by viewModel.touchFocus.collectAsState()
+    val pigalleryBase by viewModel.pigalleryBase.collectAsState()
     val viewerRequest by viewModel.viewerRequest.collectAsState()
+    val context = LocalContext.current
+    val galleryUrl = GalleryLink.forDir(pigalleryBase, right.path)
     val snackbarHostState = remember { SnackbarHostState() }
     var mkdirSide by remember { mutableStateOf<Side?>(null) }
     var uploadConfirm by remember { mutableStateOf(false) }
@@ -130,6 +135,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 selected = selectedLeft,
                 onPaneTouched = { viewModel.focus(Side.LEFT) },
                 onExpandToggle = { viewModel.toggleExpand(Side.LEFT) },
+                onOpenGallery = null,
                 onNavigate = { viewModel.navigate(Side.LEFT, it) },
                 onNavigateUp = { viewModel.navigateUp(Side.LEFT) },
                 onBreadcrumb = { viewModel.navigateToBreadcrumb(Side.LEFT, it) },
@@ -163,6 +169,13 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 selected = selectedRight,
                 onPaneTouched = { viewModel.focus(Side.RIGHT) },
                 onExpandToggle = { viewModel.toggleExpand(Side.RIGHT) },
+                onOpenGallery = galleryUrl?.let { url ->
+                    {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        }
+                    }
+                },
                 onNavigate = { viewModel.navigate(Side.RIGHT, it) },
                 onNavigateUp = { viewModel.navigateUp(Side.RIGHT) },
                 onBreadcrumb = { viewModel.navigateToBreadcrumb(Side.RIGHT, it) },
@@ -275,6 +288,8 @@ private fun BrowserPane(
     selected: Set<String>,
     onPaneTouched: () -> Unit,
     onExpandToggle: () -> Unit,
+    /** PiGallery2 深链(D1):null = 未配置不显示;仅远程栏传入 */
+    onOpenGallery: (() -> Unit)?,
     onNavigate: (String) -> Unit,
     onNavigateUp: () -> Unit,
     onBreadcrumb: (Int) -> Unit,
@@ -300,6 +315,15 @@ private fun BrowserPane(
         ) {
             Text(side.nameForUi(), style = MaterialTheme.typography.labelLarge, color = accent)
             Spacer(Modifier.weight(1f))
+            onOpenGallery?.let { open ->
+                FilledTonalIconButton(onClick = open, modifier = Modifier.size(30.dp)) {
+                    Icon(
+                        Icons.Filled.PhotoLibrary,
+                        contentDescription = "在 PiGallery2 打开当前目录",
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
+            }
             TextButton(onClick = onExpandToggle, contentPadding = PaddingValues(horizontal = 6.dp)) {
                 Text("展开", style = MaterialTheme.typography.labelMedium)
             }

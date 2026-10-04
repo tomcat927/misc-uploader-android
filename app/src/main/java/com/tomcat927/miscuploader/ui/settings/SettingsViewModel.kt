@@ -39,6 +39,8 @@ data class SettingsUiState(
     val connected: Boolean = false,
     val connectionMessage: String? = null,
     val connectedRootCount: Int? = null,
+    /** PiGallery2 地址(D1,可选;空 = 不显示相册按钮) */
+    val pigalleryBase: String = "",
     val diagnostics: DiagnosticsUiState = DiagnosticsUiState(),
 )
 
@@ -87,6 +89,10 @@ class SettingsViewModel @Inject constructor(
                     }
                 }
             }
+        }
+        viewModelScope.launch {
+            val base = settings.pigalleryBaseFlow.first()
+            _uiState.update { it.copy(pigalleryBase = base) }
         }
     }
 
@@ -191,6 +197,21 @@ class SettingsViewModel @Inject constructor(
 
     fun setShowHidden(enabled: Boolean) {
         viewModelScope.launch { settings.saveShowHidden(enabled) }
+    }
+
+    // ---- PiGallery2 深链(D1:可选地址,失焦即存) ----
+
+    private var pigalleryDirty = false
+
+    fun onPigalleryChange(value: String) {
+        pigalleryDirty = true
+        _uiState.update { it.copy(pigalleryBase = value) }
+    }
+
+    fun commitPigallery() {
+        if (!pigalleryDirty) return
+        pigalleryDirty = false
+        viewModelScope.launch { settings.savePigalleryBase(_uiState.value.pigalleryBase) }
     }
 
     // ---- 诊断(M4:零本地环境下的排查窗口) ----

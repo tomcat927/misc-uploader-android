@@ -56,6 +56,7 @@ class SettingsRepository @Inject constructor(
         val UPDATE_DISMISSED_TAG = stringPreferencesKey("update_dismissed_tag")
         val TOUCH_FOCUS = booleanPreferencesKey("touch_focus")
         val SHOW_HIDDEN = booleanPreferencesKey("show_hidden")
+        val PIGALLERY_BASE = stringPreferencesKey("pigallery_base")
     }
 
     /** 上传模式流(默认手动) */
@@ -116,6 +117,17 @@ class SettingsRepository @Inject constructor(
     suspend fun saveShowHidden(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.SHOW_HIDDEN] = enabled
+        }
+    }
+
+    /** PiGallery2 地址(D1 拍板:可选,空 = 不显示相册深链按钮;由用户运行时配置) */
+    val pigalleryBaseFlow: Flow<String> = context.dataStore.data.map { prefs ->
+        prefs[Keys.PIGALLERY_BASE].orEmpty()
+    }
+
+    suspend fun savePigalleryBase(url: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.PIGALLERY_BASE] = url.trim()
         }
     }
 

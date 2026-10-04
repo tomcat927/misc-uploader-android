@@ -160,6 +160,18 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 onToggle = viewModel::setShowHidden,
             )
 
+            CommitOnFocusLost(viewModel::commitPigallery) {
+                OutlinedTextField(
+                    value = state.pigalleryBase,
+                    onValueChange = viewModel::onPigalleryChange,
+                    label = { Text("PiGallery2 地址（可选）") },
+                    supportingText = { Text("填写后「文件」页远程栏出现相册按钮，点按在浏览器打开当前目录对应相册") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
             UploadModeCard(
                 mode = uploadMode,
                 onSelect = viewModel::setUploadMode,
