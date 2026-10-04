@@ -61,6 +61,7 @@
 ## 已知坑(全量见 AGENTS.md;Notion 侧见 notion-mcp-setup TROUBLESHOOTING)
 
 - Android: INTERNET 权限必须声明;常量名勿凭训练数据硬写;DB schema 文本列=rich_text;gh paginate 输出 JSON Lines;mkdirp 逐级建目录
+- **真机网络(2026-10-05 实锤)**: 手机代理/VPN(Clash 类)会让 app 报 ECONNREFUSED(连接与更新源同时挂);关代理即恢复——给服务器 IP 加 DIRECT 规则可共存;地址必须带 :5245(缺端口连 443 被拒)
 - Notion: 移动页面切断集成权限(404);create-view 需 2026-03-11+data_source 模型;code.language 是枚举
 - 网络: 三源(gh-proxy/github/api)国内网络可能全挂,更新检查已做明确报错与重试
 
