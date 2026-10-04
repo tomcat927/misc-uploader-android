@@ -1,6 +1,7 @@
 package com.tomcat927.miscuploader.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -51,6 +52,7 @@ class SettingsRepository @Inject constructor(
         val USERNAME = stringPreferencesKey("username")
         val PASSWORD_CIPHER = stringPreferencesKey("password_cipher")
         val UPLOAD_MODE = stringPreferencesKey("upload_mode")
+        val STARTUP_UPDATE_CHECK = booleanPreferencesKey("startup_update_check")
     }
 
     /** 上传模式流(默认手动) */
@@ -66,6 +68,19 @@ class SettingsRepository @Inject constructor(
     suspend fun saveUploadMode(mode: UploadMode) {
         context.dataStore.edit { prefs ->
             prefs[Keys.UPLOAD_MODE] = if (mode == UploadMode.AUTO_DATE) "auto_date" else "manual"
+        }
+    }
+
+    /** 启动检查更新开关(拍板 2026-10-04:默认开;关闭后启动完全不发起更新源请求) */
+    val startupUpdateCheckFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.STARTUP_UPDATE_CHECK] ?: true
+    }
+
+    suspend fun startupUpdateCheckOnce(): Boolean = startupUpdateCheckFlow.first()
+
+    suspend fun saveStartupUpdateCheck(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.STARTUP_UPDATE_CHECK] = enabled
         }
     }
 

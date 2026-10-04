@@ -14,6 +14,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -30,6 +31,7 @@ import com.tomcat927.miscuploader.BuildConfig
 @Composable
 fun UpdateCard(viewModel: UpdateViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
+    val startupCheck by viewModel.startupCheckEnabled.collectAsState()
     val context = LocalContext.current
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -110,6 +112,25 @@ fun UpdateCard(viewModel: UpdateViewModel = viewModel()) {
                     "检查并安装新版本（经 gh-proxy 加速，SHA-256 校验）",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            // 启动检查更新开关(拍板 2026-10-04:默认开;静默,失败不打扰)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("启动时检查更新", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "打开应用后自动检查，发现新版本会提示",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = startupCheck,
+                    onCheckedChange = viewModel::setStartupCheckEnabled,
                 )
             }
         }

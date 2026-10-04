@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import com.tomcat927.miscuploader.data.ConnectionManager
 import com.tomcat927.miscuploader.data.UploadRepository
+import com.tomcat927.miscuploader.update.UpdateCheckManager
 import dagger.hilt.android.HiltAndroidApp
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -17,6 +18,8 @@ class MiscApp : Application() {
 
     @Inject lateinit var uploadRepository: UploadRepository
 
+    @Inject lateinit var updateCheckManager: UpdateCheckManager
+
     @Inject lateinit var appScope: CoroutineScope
 
     override fun onCreate() {
@@ -25,6 +28,10 @@ class MiscApp : Application() {
         // 拍板:配置齐全时启动自动连接(对齐桌面端)
         appScope.launch {
             connectionManager.autoConnectIfConfigured()
+        }
+        // 启动检查更新(拍板 2026-10-04:可开关默认开;延迟避让自动连接;静默失败)
+        appScope.launch {
+            updateCheckManager.checkOnStartupIfEnabled()
         }
         // 队列续跑:有在途任务则拉起前台服务(服务启动时重置 uploading/cooldown → pending)
         uploadRepository.resumeIfPending()

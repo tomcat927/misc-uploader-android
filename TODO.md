@@ -35,7 +35,8 @@
 4. 自动归类: 设置切"按日期自动" → 分享截图 → 应落 `auto/2026/10`
 5. 杀应用重开 → 队列续跑;设置页「应用更新」卡片的检查/下载/安装流程
 6. OpenList 后台: 核对 misc-uploader 账号实际权限位(DESIGN 记录 255 与"走 WebDAV"自相矛盾,已无关本 App 但待澄清)
-7. Notion 侧已就绪(顶层双库 + Last Update 视图 + keystore 容灾页),无需动作
+7. 启动检查更新(2026-10-04 落地): 开关在设置「应用更新」卡、默认开;**当前装的版本即最新,正常应无任何提示**——验证方式 = 下次发版后旧版启动应 Snackbar 提示+设置卡直显;关掉开关冷启动不再请求更新源
+8. Notion 侧已就绪(顶层双库 + Last Update 视图 + keystore 容灾页),无需动作
 
 ## 待办 — 开发队列(按推荐顺序)
 
@@ -47,7 +48,7 @@
 6. 设置项补齐: 并发数 / 最大重试 / 仅 Wi-Fi / 默认分享目录
 7. **诊断页补课**: README 已宣称"上传日志+退出原因"但**未实现**——需 AppLogger(文件 ring)+ 设置页诊断卡,或先修正 README
 8. 低优先: POST_NOTIFICATIONS 运行时请求 / R8 / OkHttp 5.x 评估 / Room DAO 测试(Robolectric) / 启动静默更新检查 / keystore 源文件改名(带应用名,涉及 Notion 容灾页内文同步)
-9. 热更新增强(可选): 下载改 WorkManager(杀进程续传)、启动静默检查 + 通知
+9. 热更新增强(可选): ~~启动静默检查~~ ✅ 2026-10-04(改为应用内 Snackbar 提示,系统通知因 POST_NOTIFICATIONS 未请求不做);剩 下载改 WorkManager(杀进程续传)
 
 ## 已知坑(全量见 AGENTS.md;Notion 侧见 notion-mcp-setup TROUBLESHOOTING)
 
