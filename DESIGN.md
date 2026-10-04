@@ -15,7 +15,7 @@
 | 上传协议 | **纯 REST**（OpenList）：`POST /api/auth/login`、`POST /api/fs/list`、`POST /api/fs/mkdir`、`PUT /api/fs/put`；无 WebDAV |
 | 协议防御 | 响应强制 JSON + `code==200`；401 重登一次（OkHttp Authenticator）；`File-Path` 头 URL 编码统一封装 |
 | 服务端闸门 | 上传带 `Overwrite: false`（同名 403 = 已存在分支）；可选 `Last-Modified` / `X-File-Sha256` |
-| 接口缝 | `RemoteStorage` 接口（login/list/mkdir/upload），V1 仅 OpenListRestClient 一个实现（迁离 alist 系时补 WebDAV 实现） |
+| 接口缝 | `RemoteStorage` 接口（login/list/mkdir/mkdirp/upload/fileInfo/downloadTo），V1 仅 OpenListRestClient 一个实现（迁离 alist 系时补 WebDAV 实现） |
 | 上传队列 | 前台服务（dataSync 类型）+ **Room 唯一真相源**（UI 与服务同进程，靠 Room Flow 对齐）；状态机沿用桌面端 hashing/pending/uploading/cooldown/done/skipped/failed + finished_at；并发/重试退避 2s/8s/30s 可配 |
 | 进度 | 客户端字节计数（ProgressRequestBody），协议无关 |
 | 网络 | kotlinx.serialization 1.7.3 + **OkHttp 4.12.0**（M1 实钉；原拍板写 5.x，stable 坐标未验证，API 同构，升级留 V1.1 评估）；不上 Retrofit（全 app 4 个端点） |
@@ -43,6 +43,7 @@
 | 明文连接策略（实测反馈拍板） | 平台默认禁 http 挡住了合法内网场景（5244 iptables 只对内；LE 证书只覆盖公网 IP，内网 IP 无证书可验；桌面端本就支持 http）。拍板：**允许 cleartext（usesCleartextTraffic=true）**，但无 scheme 仍自动补 https、显式输 `http://` 时设置页红字警示「仅建议可信内网」——选择权还给用户；公网仍按安全模型走 5245 https |
 | 应用内热更新（2026-10-04 拍板，从 WON'T 移出） | 移植 ncm-cloud-player 同款：设置页「检查更新」→ latest.json 双源检查（gh-proxy 优先/GitHub 回退，GitHub releases API 兜底）→ versionCode 比较 → APK 下载（进度）→ SHA-256 校验 → FileProvider + 系统安装器；REQUEST_INSTALL_PACKAGES 权限 + 未授权时跳「安装未知应用」设置。**简化差异：下载在 VM 作用域（ncm 用 WorkManager），杀进程需重新下载**；启动静默检查留后续 |
 | 修正（实测 bug 1） | **M1 遗留：Manifest 漏声明 `INTERNET` 权限**——真机连接报 `socket failed: EPERM`（坑 4）；补 INTERNET + ACCESS_NETWORK_STATE（后者为仅 Wi-Fi 功能预置） |
+| 文件查看（2026-10-04 拍板，先于 A1） | **内置查看器只做两类**：图片（全屏 Dialog 盖底部导航/双指缩放 1–6x/同目录图片左右翻看，远程 Coil 直连 raw_url 不落盘）+ 文本只读（juniversalchardet 编码识别、256KB 分块「加载更多」）；**其余类型（视频/PDF 等）委托系统 ACTION_VIEW**（远程先下载 cache/remote_preview 再 FileProvider 打开）；hex/ZIP/APK/编辑器不做。远程文本 >50MB 不进查看器（打开前 fs/get 预检 size，免整文件下载）；单击文件按 FileKind 路由（多选态单击仍是勾选，语义不变）；Dialog 返回键 = 关闭 |
 | 本地文件 | `MANAGE_EXTERNAL_STORAGE` + `java.io.File`（自用侧载，不上架） |
 | 双窗口交互 | 借 SplitLanzou 的交互模型与参数：聚焦模型、展开动画 400ms、非聚焦侧两列瀑布流、底部 12sp 操作条；**借参数不借实现**（其代码 Apache-2.0，选择性借用需署名） |
 | 工程纪律 | **零本地环境**：不装 Android SDK/Gradle/Studio，构建签名发布全在 GitHub Actions，push 后监听到 completed；诊断下沉（设置→调试日志页，V1 必做）；adb 仅采集日志 |
@@ -76,6 +77,7 @@ SHA-256 去重（本地历史：sha → 最新远程路径）、`auto/YYYY/MM` �
 - M3 上传队列 ✅（2026-10-03）——MVP 可用
 - M4 分享接收 + 诊断 ✅（2026-10-03）——V1 里程碑完成
 - **A2 自动归类（本提交）**：上传模式设置项（手动/按日期自动）+ 任务制入队 + mkdirp 修正 M3 文件夹上传 bug
+- **文件查看（2026-10-04）**：FileKind 路由 + 图片/文本内置查看器 + 其余委托系统 + 协议层 fileInfo/downloadTo（raw_url host 修正）；真机实测并入用户侧清单
 - 待拍板/待做：A1 去重+历史 / C 归档状态可见 / B 桌面端重构 / D1 PiGallery2 深链；P0 实测仍欠
 - M3 多选 + 上传队列 + 前台服务 + 进度（MVP 可用）
 - M4 V1.1（去重 / 归类 / 历史）

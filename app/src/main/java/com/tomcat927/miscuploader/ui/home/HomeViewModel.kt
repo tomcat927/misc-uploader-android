@@ -12,6 +12,10 @@ import com.tomcat927.miscuploader.data.UploadMode
 import com.tomcat927.miscuploader.data.UploadPlanning
 import com.tomcat927.miscuploader.data.UploadRepository
 import com.tomcat927.miscuploader.data.UploadTask
+import com.tomcat927.miscuploader.data.UploadPlanning
+import com.tomcat927.miscuploader.ui.viewer.FileKind
+import com.tomcat927.miscuploader.ui.viewer.REMOTE_PREVIEW_LIMIT
+import com.tomcat927.miscuploader.ui.viewer.ViewerRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -170,6 +174,82 @@ class HomeViewModel @Inject constructor(
             },
             rel = rel,
         )
+
+    // ---- 文件查看(拍板 2026-10-04:图片/文本内置,其余委托系统;先于 A1) ----
+
+    private val _viewerRequest = MutableStateFlow<ViewerRequest?>(null)
+    val viewerRequest: StateFlow<ViewerRequest?> = _viewerRequest.asStateFlow()
+
+    /** 文件单击(非多选态):按 FileKind 路由到查看器;远程文本先 fs/get 预检大小,>50MB 免下载直接拒 */
+    fun openFile(side: Side, item: FileItem) {
+        if (item.isDir) return
+        val kind = FileKind.of(item.name)
+        if (side == Side.RIGHT && kind == FileKind.TEXT) {
+            viewModelScope.launch {
+                try {
+                    val client = connection.clientOrNull()
+                        ?: throw IllegalStateException("未连接——请到「设置」连接服务器")
+                    val remote = UploadPlanning.joinRemotePath(stateOf(side).path, item.name)
+                    if (client.fileInfo(remote).size > REMOTE_PREVIEW_LIMIT) {
+                        events.emit("「${item.name}」超过 50MB，不进文本查看器")
+                    } else {
+                        openViewer(side, item, kind)
+                    }
+                } catch (e: Exception) {
+                    events.emit(e.message ?: "打开失败")
+                }
+            }
+        } else {
+            openViewer(side, item, kind)
+        }
+    }
+
+    private fun openViewer(side: Side, item: FileItem, kind: FileKind) {
+        val state = stateOf(side)
+        val items = if (kind == FileKind.IMAGE) {
+            state.entries.filter { !it.isDir && FileKind.of(it.name) == FileKind.IMAGE }
+        } else {
+            listOf(item)
+        }
+        _viewerRequest.value = ViewerRequest(
+            isLocal = side == Side.LEFT,
+            kind = kind,
+            basePath = state.path,
+            items = items,
+            index = items.indexOfFirst { it.name == item.name }.coerceAtLeast(0),
+        )
+    }
+
+    fun closeViewer() {
+        _viewerRequest.value = null
+    }
+
+    /** 查看器闭包:本地文件(查看器全屏打开期间两栏不可操作,basePath 稳定) */
+    fun localFileOf(request: ViewerRequest, item: FileItem): File = File(request.basePath, item.name)
+
+    /** 查看器闭包:远程图片直连 raw_url(Coil 加载,不落盘) */
+    suspend fun rawUrlOf(request: ViewerRequest, item: FileItem): String {
+        val client = connection.clientOrNull()
+            ?: throw IllegalStateException("未连接——请到「设置」连接服务器")
+        return client.fileInfo(UploadPlanning.joinRemotePath(request.basePath, item.name)).rawUrl
+    }
+
+    /** 查看器闭包:远程文本/其他类型先下载到 cache/remote_preview(经 raw_url 跟随重定向) */
+    suspend fun downloadPreview(
+        request: ViewerRequest,
+        item: FileItem,
+        onProgress: (Float) -> Unit,
+    ): File {
+        val client = connection.clientOrNull()
+            ?: throw IllegalStateException("未连接——请到「设置」连接服务器")
+        val remote = UploadPlanning.joinRemotePath(request.basePath, item.name)
+        val cacheDir = File(context.cacheDir, "remote_preview").apply { mkdirs() }
+        val target = File(cacheDir, "${Integer.toHexString(remote.hashCode())}_${item.name}")
+        client.downloadTo(remote, target) { sent, total ->
+            onProgress(if (total > 0) sent.toFloat() / total else 0f)
+        }
+        return target
+    }
 
     // ---- 导航 ----
 

@@ -70,6 +70,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tomcat927.miscuploader.data.UploadMode
+import com.tomcat927.miscuploader.ui.viewer.FileViewerDialog
 
 /**
  * 双栏主界面(拍板借 SplitLanzou:触摸聚焦、聚焦侧单列/非聚焦侧两列、400ms 展开动画 + 边缘把手)。
@@ -84,6 +85,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val storageGranted by viewModel.storageGranted.collectAsState()
     val selectedLeft by viewModel.selectedLeft.collectAsState()
     val uploadMode by viewModel.uploadMode.collectAsState()
+    val viewerRequest by viewModel.viewerRequest.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var mkdirSide by remember { mutableStateOf<Side?>(null) }
     var uploadConfirm by remember { mutableStateOf(false) }
@@ -128,6 +130,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onBreadcrumb = { viewModel.navigateToBreadcrumb(Side.LEFT, it) },
                 onRefresh = { viewModel.refresh(Side.LEFT) },
                 onMkdir = { mkdirSide = Side.LEFT },
+                onOpenFile = { viewModel.openFile(Side.LEFT, it) },
                 onItemLongPress = viewModel::onItemLongPress,
                 onItemToggleSelect = viewModel::toggleSelect,
                 onUploadSelection = { uploadConfirm = true },
@@ -157,6 +160,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onBreadcrumb = { viewModel.navigateToBreadcrumb(Side.RIGHT, it) },
                 onRefresh = { viewModel.refresh(Side.RIGHT) },
                 onMkdir = { mkdirSide = Side.RIGHT },
+                onOpenFile = { viewModel.openFile(Side.RIGHT, it) },
                 onItemLongPress = {},
                 onItemToggleSelect = {},
                 onUploadSelection = {},
@@ -191,6 +195,17 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 mkdirSide = null
             },
             onDismiss = { mkdirSide = null },
+        )
+    }
+
+    // 文件查看(拍板 2026-10-04):全屏 Dialog 独立窗口,盖住底部导航,返回键关闭
+    viewerRequest?.let { request ->
+        FileViewerDialog(
+            request = request,
+            localFile = { item -> viewModel.localFileOf(request, item) },
+            remoteRawUrl = { item -> viewModel.rawUrlOf(request, item) },
+            remoteDownload = { item, onProgress -> viewModel.downloadPreview(request, item, onProgress) },
+            onClose = viewModel::closeViewer,
         )
     }
 
@@ -230,6 +245,7 @@ private fun BrowserPane(
     onBreadcrumb: (Int) -> Unit,
     onRefresh: () -> Unit,
     onMkdir: () -> Unit,
+    onOpenFile: (FileItem) -> Unit,
     onItemLongPress: (FileItem) -> Unit,
     onItemToggleSelect: (FileItem) -> Unit,
     onUploadSelection: () -> Unit,
@@ -269,13 +285,14 @@ private fun BrowserPane(
                 isFocused -> FocusedFileList(
                     state, breadcrumb.size > 1, onNavigate, onNavigateUp,
                     onItemLongPress = onItemLongPress, selectionMode = selectionMode, selected = selected,
-                    onItemToggleSelect = onItemToggleSelect,
+                    onItemToggleSelect = onItemToggleSelect, onOpenFile = onOpenFile,
                 )
 
                 else -> CompactFileList(
                     state, breadcrumb.size > 1, onNavigate, onNavigateUp,
                     onItemLongPress = onItemLongPress, selectionMode = selectionMode, selected = selected,
                     onItemToggleSelect = onItemToggleSelect, selectionEnabled = side == Side.LEFT,
+                    onOpenFile = onOpenFile,
                 )
             }
 
@@ -333,6 +350,7 @@ private fun FocusedFileList(
     selectionMode: Boolean,
     selected: Set<String>,
     onItemToggleSelect: (FileItem) -> Unit,
+    onOpenFile: (FileItem) -> Unit,
 ) {
     PaneContent(state) { entries ->
         LazyColumn(Modifier.fillMaxSize()) {
@@ -349,7 +367,7 @@ private fun FocusedFileList(
                     onOpen = { opened ->
                         if (selectionMode) onItemToggleSelect(opened)
                         else if (opened.isDir) onNavigate(opened.name)
-                        // 文件单击(非多选):M3 无操作;分享接收在 M4
+                        else onOpenFile(opened)
                     },
                     onLongPress = { onItemLongPress(it) },
                 )
@@ -370,6 +388,7 @@ private fun CompactFileList(
     selected: Set<String>,
     onItemToggleSelect: (FileItem) -> Unit,
     selectionEnabled: Boolean,
+    onOpenFile: (FileItem) -> Unit,
 ) {
     PaneContent(state) { entries ->
         LazyVerticalGrid(
@@ -389,6 +408,7 @@ private fun CompactFileList(
                     onOpen = {
                         if (selectionMode && selectionEnabled) onItemToggleSelect(item)
                         else if (item.isDir) onNavigate(item.name)
+                        else onOpenFile(item)
                     },
                     onLongPress = if (selectionEnabled) {
                         { onItemLongPress(item) }

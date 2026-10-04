@@ -12,42 +12,51 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.tomcat927.miscuploader.core.OpenListApiException
+import FileItem
 import java.io.File
-import kotlin.math.roundToInt
 
 /** 文件大类(拍板:图片/文本内置查看,其余委托系统;hex/zip/apk 不做) */
 enum class FileKind(val label: String) {
@@ -76,13 +85,17 @@ enum class FileKind(val label: String) {
 data class ViewerRequest(
     val isLocal: Boolean,
     val kind: FileKind,
+    /** 打开文件时所在目录(本地绝对路径 / 远程以 / 开头;VM 闭包按它拼全路径) */
+    val basePath: String,
     /** 图片类 = 可翻看的图片条目;文本/其他 = 单元素 */
-    val items: List<com.tomcat927.miscuploader.ui.home.FileItem>,
+    val items: List<FileItem>,
     val index: Int,
 )
 
 private const val TEXT_CHUNK = 256 * 1024
-private const val REMOTE_PREVIEW_LIMIT = 50L * 1024 * 1024
+
+/** 远程预览上限:文本 >50MB 不进查看器(VM 打开前 fs/get 预检,查看器内兜底) */
+const val REMOTE_PREVIEW_LIMIT = 50L * 1024 * 1024
 
 fun openWithSystem(context: Context, file: File) {
     val ext = file.extension.lowercase()
@@ -98,61 +111,66 @@ fun openWithSystem(context: Context, file: File) {
 /**
  * 文件查看对话框(拍板:图片全屏/缩放/同目录翻看;文本只读/编码识别/分块;其余委托系统打开;
  * 远程文件经 raw_url 下载到缓存,>50MB 文本不进查看器)。
+ * 全屏 Dialog(独立窗口盖住底部导航;系统返回键 = 关闭)。
  */
 @Composable
 fun FileViewerDialog(
     request: ViewerRequest,
-    localFile: (com.tomcat927.miscuploader.ui.home.FileItem) -> File,
-    remoteRawUrl: suspend (com.tomcat927.miscuploader.ui.home.FileItem) -> String,
-    remoteDownload: suspend (com.tomcat927.miscuploader.ui.home.FileItem, onProgress: (Float) -> Unit) -> File,
+    localFile: (FileItem) -> File,
+    remoteRawUrl: suspend (FileItem) -> String,
+    remoteDownload: suspend (FileItem, onProgress: (Float) -> Unit) -> File,
     onClose: () -> Unit,
 ) {
-    val context = LocalContext.current
+    // 空条目直接不弹窗(全屏 Dialog 空内容会挡住全部触摸)
     val start = request.items.getOrNull(request.index) ?: request.items.firstOrNull() ?: return
-
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black),
+    Dialog(
+        onDismissRequest = onClose,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        when (request.kind) {
-            FileKind.IMAGE -> ImagePager(request, localFile, remoteRawUrl)
-            FileKind.TEXT -> TextViewer(request, localFile, remoteDownload)
-            FileKind.OTHER -> DelegateViewer(request, localFile, remoteDownload)
-        }
-
-        // 顶部:标题 + 关闭
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.5f))
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black),
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    start.name,
-                    color = Color.White,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (request.kind == FileKind.IMAGE && request.items.size > 1) {
-                    Text(
-                        "${request.index + 1}/${request.items.size} · 左右滑动翻看",
-                        color = Color.White.copy(alpha = 0.7f),
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                }
+            when (request.kind) {
+                FileKind.IMAGE -> ImagePager(request, localFile, remoteRawUrl)
+                FileKind.TEXT -> TextViewer(request, localFile, remoteDownload)
+                FileKind.OTHER -> DelegateViewer(request, localFile, remoteDownload)
             }
-            FilledTonalClose(onClose)
+
+            // 顶部:标题 + 关闭
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.5f))
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        start.name,
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (request.kind == FileKind.IMAGE && request.items.size > 1) {
+                        Text(
+                            "${request.index + 1}/${request.items.size} · 左右滑动翻看",
+                            color = Color.White.copy(alpha = 0.7f),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+                FilledTonalClose(onClose)
+            }
         }
     }
 }
 
 @Composable
 private fun FilledTonalClose(onClose: () -> Unit) {
-    androidx.compose.material3.FilledTonalIconButton(
+    FilledTonalIconButton(
         onClick = onClose,
         modifier = Modifier.size(36.dp),
     ) {
@@ -165,14 +183,14 @@ private fun FilledTonalClose(onClose: () -> Unit) {
 @Composable
 private fun ImagePager(
     request: ViewerRequest,
-    localFile: (com.tomcat927.miscuploader.ui.home.FileItem) -> File,
-    remoteRawUrl: suspend (com.tomcat927.miscuploader.ui.home.FileItem) -> String,
+    localFile: (FileItem) -> File,
+    remoteRawUrl: suspend (FileItem) -> String,
 ) {
     val pagerState = rememberPagerState(initialPage = request.index) { request.items.size }
     HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
         val item = request.items[page]
         var scale by remember { mutableFloatStateOf(1f) }
-        var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+        var offset by remember { mutableStateOf(Offset.Zero) }
         var url by remember(item.name) { mutableStateOf<String?>(null) }
         var failed by remember(item.name) { mutableStateOf(false) }
 
@@ -187,6 +205,8 @@ private fun ImagePager(
         }
 
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            // 委托属性无法 smart cast,先取快照再判空
+            val resolvedUrl = url
             when {
                 request.isLocal -> ZoomableImage(
                     model = localFile(item),
@@ -197,9 +217,9 @@ private fun ImagePager(
                 )
 
                 failed -> Text("加载失败", color = Color.White.copy(alpha = 0.7f))
-                url == null -> CircularProgressIndicator(color = Color.White)
+                resolvedUrl == null -> CircularProgressIndicator(color = Color.White)
                 else -> ZoomableImage(
-                    model = url,
+                    model = resolvedUrl,
                     scale = scale,
                     onScale = { scale = it },
                     offset = offset,
@@ -215,8 +235,8 @@ private fun ZoomableImage(
     model: Any,
     scale: Float,
     onScale: (Float) -> Unit,
-    offset: androidx.compose.ui.geometry.Offset,
-    onOffset: (androidx.compose.ui.geometry.Offset) -> Unit,
+    offset: Offset,
+    onOffset: (Offset) -> Unit,
 ) {
     AsyncImage(
         model = model,
@@ -235,7 +255,7 @@ private fun ZoomableImage(
                 detectTransformGestures { _, pan, zoom, _ ->
                     val newScale = (scale * zoom).coerceIn(1f, 6f)
                     onScale(newScale)
-                    onOffset(if (newScale > 1f) offset + pan else androidx.compose.ui.geometry.Offset.Zero)
+                    onOffset(if (newScale > 1f) offset + pan else Offset.Zero)
                 }
             },
     )
@@ -246,8 +266,8 @@ private fun ZoomableImage(
 @Composable
 private fun TextViewer(
     request: ViewerRequest,
-    localFile: (com.tomcat927.miscuploader.ui.home.FileItem) -> File,
-    remoteDownload: suspend (com.tomcat927.miscuploader.ui.home.FileItem, onProgress: (Float) -> Unit) -> File,
+    localFile: (FileItem) -> File,
+    remoteDownload: suspend (FileItem, onProgress: (Float) -> Unit) -> File,
 ) {
     val item = request.items.first()
     var text by remember { mutableStateOf("加载中…") }
@@ -286,8 +306,7 @@ private fun TextViewer(
             val f: File = if (request.isLocal) {
                 localFile(item)
             } else {
-                val info = remoteDownload(item) { p -> downloadProgress = p }
-                info
+                remoteDownload(item) { p -> downloadProgress = p }
             }.also { file = it }
             if (f.length() > REMOTE_PREVIEW_LIMIT) {
                 error = "文件超过 50MB，不进文本查看器"
@@ -376,8 +395,8 @@ private fun TextViewer(
 @Composable
 private fun DelegateViewer(
     request: ViewerRequest,
-    localFile: (com.tomcat927.miscuploader.ui.home.FileItem) -> File,
-    remoteDownload: suspend (com.tomcat927.miscuploader.ui.home.FileItem, onProgress: (Float) -> Unit) -> File,
+    localFile: (FileItem) -> File,
+    remoteDownload: suspend (FileItem, onProgress: (Float) -> Unit) -> File,
 ) {
     val item = request.items.first()
     val context = LocalContext.current
@@ -400,12 +419,14 @@ private fun DelegateViewer(
     }
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        // 委托属性无法 smart cast,先取快照再判空
+        val err = error
         when {
-            error != null -> Text(
-                error,
+            err != null -> Text(
+                err,
                 color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodyMedium,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                textAlign = TextAlign.Center,
                 modifier = Modifier.padding(24.dp),
             )
 
