@@ -62,13 +62,65 @@ class HomeViewModel @Inject constructor(
     private val showHidden: StateFlow<Boolean> = settings.showHiddenFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    /** 浏览列表 = 完整条目按「显示隐藏文件」实时过滤(切换开关即生效,无需刷新) */
-    val left: StateFlow<BrowserState> = combine(_left, settings.showHiddenFlow) { state, show ->
-        if (show) state else state.copy(entries = state.entries.filterNot { it.name.startsWith(".") })
+    // ---- 浏览过滤与排序(拍板 2026-10-05,MT 同款能力;纯展示层) ----
+
+    private val _leftCategory = MutableStateFlow(FileCategory.ALL)
+    private val _rightCategory = MutableStateFlow(FileCategory.ALL)
+    private val _leftSort = MutableStateFlow(SortSpec())
+    private val _rightSort = MutableStateFlow(SortSpec())
+
+    val leftCategory: StateFlow<FileCategory> = _leftCategory.asStateFlow()
+    val rightCategory: StateFlow<FileCategory> = _rightCategory.asStateFlow()
+    val leftSort: StateFlow<SortSpec> = _leftSort.asStateFlow()
+    val rightSort: StateFlow<SortSpec> = _rightSort.asStateFlow()
+
+    fun setCategory(side: Side, category: FileCategory) {
+        categoryOf(side).value = category
+    }
+
+    /** 同字段再点 = 翻转方向;切新字段时时间默认新在前 */
+    fun setSort(side: Side, field: SortField) {
+        val cur = sortOf(side).value
+        sortOf(side).value = if (cur.field == field) {
+            cur.copy(asc = !cur.asc)
+        } else {
+            SortSpec(field, asc = field != SortField.TIME)
+        }
+    }
+
+    private fun categoryOf(side: Side) = if (side == Side.LEFT) _leftCategory else _rightCategory
+
+    private fun sortOf(side: Side) = if (side == Side.LEFT) _leftSort else _rightSort
+
+    /** 展示侧统一加工:隐藏过滤 → 类型过滤(目录恒显示) → 排序(目录恒优先) */
+    private fun processEntries(
+        entries: List<FileItem>,
+        show: Boolean,
+        category: FileCategory,
+        sort: SortSpec,
+    ): List<FileItem> = entries
+        .filter { show || !it.name.startsWith(".") }
+        .filter { it.isDir || category == FileCategory.ALL || FileCategory.of(it.name) == category }
+        .let { list ->
+            val cmp = when (sort.field) {
+                SortField.NAME -> compareBy<FileItem> { it.name.lowercase() }
+                SortField.SIZE -> compareBy<FileItem> { it.size }
+                SortField.TIME -> compareBy<FileItem> { it.modifiedText }
+            }
+            list.sortedWith(compareByDescending<FileItem> { it.isDir }.then(if (sort.asc) cmp else cmp.reversed()))
+        }
+
+    /** 浏览列表 = 完整条目按「显示隐藏 + 类型过滤 + 排序」加工(切换即生效,无需刷新) */
+    val left: StateFlow<BrowserState> = combine(
+        _left, settings.showHiddenFlow, _leftCategory, _leftSort,
+    ) { state, show, cat, sort ->
+        state.copy(entries = processEntries(state.entries, show, cat, sort))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _left.value)
 
-    val right: StateFlow<BrowserState> = combine(_right, settings.showHiddenFlow) { state, show ->
-        if (show) state else state.copy(entries = state.entries.filterNot { it.name.startsWith(".") })
+    val right: StateFlow<BrowserState> = combine(
+        _right, settings.showHiddenFlow, _rightCategory, _rightSort,
+    ) { state, show, cat, sort ->
+        state.copy(entries = processEntries(state.entries, show, cat, sort))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _right.value)
 
     private val _storageGranted = MutableStateFlow(false)
@@ -260,6 +312,16 @@ class HomeViewModel @Inject constructor(
         _selectedLeft.value = emptySet()
     }
 
+    /** 全选 = 当前可见条目(含目录;右栏剔除受保护 auto);与过滤/隐藏/排序联动 */
+    fun selectAll(side: Side) {
+        val state = stateOf(side)
+        val names = processEntries(state.entries, showHidden.value, categoryOf(side).value, sortOf(side).value)
+            .filterNot { side == Side.RIGHT && it.isDir && isProtectedRemoteEntry(state.path, it.name) }
+            .map { it.name }
+            .toSet()
+        if (side == Side.LEFT) _selectedLeft.value = names else _selectedRight.value = names
+    }
+
     /** 上传已选项(拍板 A2:手动模式 → 远程当前目录;自动模式 → 按各文件 mtime 归 auto/yyyy/MM) */
     fun uploadSelected() {
         val selected = _selectedLeft.value
@@ -337,8 +399,8 @@ class HomeViewModel @Inject constructor(
 
     private fun openViewer(side: Side, item: FileItem, kind: FileKind) {
         val state = stateOf(side)
-        // 翻页列表与浏览列表同源:同样按「显示隐藏文件」开关过滤
-        val visible = state.entries.filter { showHidden.value || !it.name.startsWith(".") }
+        // 翻页列表与浏览列表同源:同样按「显示隐藏 + 类型过滤」加工
+        val visible = processEntries(state.entries, showHidden.value, categoryOf(side).value, sortOf(side).value)
         val items = if (kind == FileKind.IMAGE) {
             visible.filter { !it.isDir && FileKind.of(it.name) == FileKind.IMAGE }
         } else {

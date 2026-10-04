@@ -9,6 +9,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -35,6 +37,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
@@ -46,7 +49,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -90,6 +96,10 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val uploadMode by viewModel.uploadMode.collectAsState()
     val touchFocus by viewModel.touchFocus.collectAsState()
     val pigalleryBase by viewModel.pigalleryBase.collectAsState()
+    val leftCategory by viewModel.leftCategory.collectAsState()
+    val rightCategory by viewModel.rightCategory.collectAsState()
+    val leftSort by viewModel.leftSort.collectAsState()
+    val rightSort by viewModel.rightSort.collectAsState()
     val viewerRequest by viewModel.viewerRequest.collectAsState()
     val context = LocalContext.current
     val galleryUrl = GalleryLink.forDir(pigalleryBase, right.path)
@@ -133,6 +143,11 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 breadcrumb = viewModel.breadcrumbOf(Side.LEFT, left.path),
                 selectionMode = selectedLeft.isNotEmpty(),
                 selected = selectedLeft,
+                category = leftCategory,
+                onCategory = { viewModel.setCategory(Side.LEFT, it) },
+                sort = leftSort,
+                onSort = { viewModel.setSort(Side.LEFT, it) },
+                onSelectAll = { viewModel.selectAll(Side.LEFT) },
                 onPaneTouched = { viewModel.focus(Side.LEFT) },
                 onExpandToggle = { viewModel.toggleExpand(Side.LEFT) },
                 onOpenGallery = null,
@@ -167,6 +182,11 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 breadcrumb = viewModel.breadcrumbOf(Side.RIGHT, right.path),
                 selectionMode = selectedRight.isNotEmpty(),
                 selected = selectedRight,
+                category = rightCategory,
+                onCategory = { viewModel.setCategory(Side.RIGHT, it) },
+                sort = rightSort,
+                onSort = { viewModel.setSort(Side.RIGHT, it) },
+                onSelectAll = { viewModel.selectAll(Side.RIGHT) },
                 onPaneTouched = { viewModel.focus(Side.RIGHT) },
                 onExpandToggle = { viewModel.toggleExpand(Side.RIGHT) },
                 onOpenGallery = galleryUrl?.let { url ->
@@ -286,6 +306,11 @@ private fun BrowserPane(
     breadcrumb: List<String>,
     selectionMode: Boolean,
     selected: Set<String>,
+    category: FileCategory,
+    onCategory: (FileCategory) -> Unit,
+    sort: SortSpec,
+    onSort: (SortField) -> Unit,
+    onSelectAll: () -> Unit,
     onPaneTouched: () -> Unit,
     onExpandToggle: () -> Unit,
     /** PiGallery2 深链(D1):null = 未配置不显示;仅远程栏传入 */
@@ -332,7 +357,28 @@ private fun BrowserPane(
             }
         }
 
-        BreadcrumbRow(breadcrumb, onBreadcrumb)
+        if (selectionMode) {
+            // 多选态顶栏:取消/全选/已选(替换面包屑,半栏宽度取舍——反选未做)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(onClick = onCancelSelection, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Text("取消")
+                }
+                TextButton(onClick = onSelectAll, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                    Text("全选")
+                }
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "已选 ${selected.size}",
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+            }
+        } else {
+            BreadcrumbRow(breadcrumb, onBreadcrumb)
+        }
 
         Box(
             Modifier
@@ -340,6 +386,29 @@ private fun BrowserPane(
                 .height(2.dp)
                 .background(if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant),
         )
+
+        // 工具条:类型过滤 chips + 排序(拍板 2026-10-05,MT 同款能力;目录恒显示不受过滤)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                FileCategory.entries.forEach { c ->
+                    FilterChip(
+                        selected = category == c,
+                        onClick = { onCategory(c) },
+                        label = { Text(c.label, style = MaterialTheme.typography.labelSmall) },
+                    )
+                }
+            }
+            SortMenuButton(sort = sort, onSort = onSort)
+        }
 
         Box(Modifier.weight(1f)) {
             when {
@@ -363,7 +432,7 @@ private fun BrowserPane(
             }
         }
 
-        // 底部操作条:多选态显示操作(左=上传,右=移动/删除);普通态显示新建文件夹
+        // 底部操作条:多选态只留主操作(取消/全选在顶部栏);普通态=新建文件夹+目录统计
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -371,9 +440,6 @@ private fun BrowserPane(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selectionMode) {
-                TextButton(onClick = onCancelSelection) { Text("取消") }
-                Spacer(Modifier.weight(1f))
-                Text("已选 ${selected.size}", style = MaterialTheme.typography.labelLarge)
                 Spacer(Modifier.weight(1f))
                 when (side) {
                     Side.LEFT -> Button(
@@ -387,10 +453,7 @@ private fun BrowserPane(
                     }
 
                     Side.RIGHT -> {
-                        Button(
-                            onClick = onMoveSelection,
-                            enabled = selected.isNotEmpty(),
-                        ) {
+                        Button(onClick = onMoveSelection, enabled = selected.isNotEmpty()) {
                             Text("移动到…")
                         }
                         TextButton(
@@ -409,10 +472,50 @@ private fun BrowserPane(
                     Text("新建文件夹", style = MaterialTheme.typography.labelMedium)
                 }
                 Spacer(Modifier.weight(1f))
+                val dirs = state.entries.count { it.isDir }
                 Text(
-                    "${state.entries.size} 项",
+                    "文件夹 $dirs 文件 ${state.entries.size - dirs}",
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(end = 12.dp),
+                )
+            }
+        }
+    }
+}
+
+/** 排序菜单(拍板 2026-10-05):同字段再点翻转方向;时间默认新在前 */
+@Composable
+private fun SortMenuButton(sort: SortSpec, onSort: (SortField) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        FilledTonalIconButton(
+            onClick = { expanded = true },
+            modifier = Modifier
+                .padding(end = 6.dp)
+                .size(30.dp),
+        ) {
+            Icon(
+                Icons.AutoMirrored.Filled.Sort,
+                contentDescription = "排序方式",
+                modifier = Modifier.size(17.dp),
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            SortField.entries.forEach { field ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            when (field) {
+                                SortField.NAME -> "按名称"
+                                SortField.SIZE -> "按大小"
+                                SortField.TIME -> "按时间"
+                            } + if (sort.field == field) (if (sort.asc) " ↑" else " ↓") else "",
+                        )
+                    },
+                    onClick = {
+                        onSort(field)
+                        expanded = false
+                    },
                 )
             }
         }
