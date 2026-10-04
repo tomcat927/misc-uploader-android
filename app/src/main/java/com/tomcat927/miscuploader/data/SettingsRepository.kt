@@ -55,6 +55,7 @@ class SettingsRepository @Inject constructor(
         val STARTUP_UPDATE_CHECK = booleanPreferencesKey("startup_update_check")
         val UPDATE_DISMISSED_TAG = stringPreferencesKey("update_dismissed_tag")
         val TOUCH_FOCUS = booleanPreferencesKey("touch_focus")
+        val SHOW_HIDDEN = booleanPreferencesKey("show_hidden")
     }
 
     /** 上传模式流(默认手动) */
@@ -104,6 +105,17 @@ class SettingsRepository @Inject constructor(
     suspend fun saveTouchFocus(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.TOUCH_FOCUS] = enabled
+        }
+    }
+
+    /** 显示隐藏文件开关(拍板 2026-10-04:默认关;"." 前缀=隐藏,本地/远程同规则) */
+    val showHiddenFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.SHOW_HIDDEN] ?: false
+    }
+
+    suspend fun saveShowHidden(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.SHOW_HIDDEN] = enabled
         }
     }
 

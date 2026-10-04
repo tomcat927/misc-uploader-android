@@ -54,6 +54,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
     val uploadMode by viewModel.uploadMode.collectAsState()
     val touchFocus by viewModel.touchFocus.collectAsState()
+    val showHidden by viewModel.showHidden.collectAsState()
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("设置") }) },
@@ -154,6 +155,11 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 onToggle = viewModel::setTouchFocus,
             )
 
+            ShowHiddenCard(
+                enabled = showHidden,
+                onToggle = viewModel::setShowHidden,
+            )
+
             UploadModeCard(
                 mode = uploadMode,
                 onSelect = viewModel::setUploadMode,
@@ -180,6 +186,27 @@ private fun TouchFocusCard(enabled: Boolean, onToggle: (Boolean) -> Unit) {
                 Text("双栏触摸聚焦", style = MaterialTheme.typography.titleSmall)
                 Text(
                     "开启：点哪栏哪栏变单列，另一栏两列总览；关闭：两栏均为单列，点击只变高亮",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = enabled, onCheckedChange = onToggle)
+        }
+    }
+}
+
+/** 显示隐藏文件开关(拍板 2026-10-04:默认关;"." 前缀=隐藏,本地/远程同规则,切换即时生效) */
+@Composable
+private fun ShowHiddenCard(enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("显示隐藏文件", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "显示以「.」开头的文件/文件夹（本地与远程同规则），切换即时生效",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

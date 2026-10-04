@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -54,10 +55,20 @@ class HomeViewModel @Inject constructor(
     val expandedSide: StateFlow<Side?> = _expandedSide.asStateFlow()
 
     private val _left = MutableStateFlow(BrowserState(path = localRoot))
-    val left: StateFlow<BrowserState> = _left.asStateFlow()
-
     private val _right = MutableStateFlow(BrowserState(path = "/"))
-    val right: StateFlow<BrowserState> = _right.asStateFlow()
+
+    /** 显示隐藏文件(拍板 2026-10-04:默认关;"." 前缀=隐藏,本地/远程同规则) */
+    private val showHidden: StateFlow<Boolean> = settings.showHiddenFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /** 浏览列表 = 完整条目按「显示隐藏文件」实时过滤(切换开关即生效,无需刷新) */
+    val left: StateFlow<BrowserState> = combine(_left, settings.showHiddenFlow) { state, show ->
+        if (show) state else state.copy(entries = state.entries.filterNot { it.name.startsWith(".") })
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _left.value)
+
+    val right: StateFlow<BrowserState> = combine(_right, settings.showHiddenFlow) { state, show ->
+        if (show) state else state.copy(entries = state.entries.filterNot { it.name.startsWith(".") })
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _right.value)
 
     private val _storageGranted = MutableStateFlow(false)
     val storageGranted: StateFlow<Boolean> = _storageGranted.asStateFlow()
@@ -232,8 +243,10 @@ class HomeViewModel @Inject constructor(
 
     private fun openViewer(side: Side, item: FileItem, kind: FileKind) {
         val state = stateOf(side)
+        // 翻页列表与浏览列表同源:同样按「显示隐藏文件」开关过滤
+        val visible = state.entries.filter { showHidden.value || !it.name.startsWith(".") }
         val items = if (kind == FileKind.IMAGE) {
-            state.entries.filter { !it.isDir && FileKind.of(it.name) == FileKind.IMAGE }
+            visible.filter { !it.isDir && FileKind.of(it.name) == FileKind.IMAGE }
         } else {
             listOf(item)
         }

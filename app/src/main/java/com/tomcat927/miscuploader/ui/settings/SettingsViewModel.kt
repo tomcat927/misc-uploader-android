@@ -184,6 +184,15 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settings.saveTouchFocus(enabled) }
     }
 
+    // ---- 显示隐藏文件(2026-10-04 拍板:默认关) ----
+
+    val showHidden: StateFlow<Boolean> = settings.showHiddenFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setShowHidden(enabled: Boolean) {
+        viewModelScope.launch { settings.saveShowHidden(enabled) }
+    }
+
     // ---- 诊断(M4:零本地环境下的排查窗口) ----
 
     fun toggleDiagnostics() {
