@@ -1,5 +1,6 @@
 package com.tomcat927.miscuploader.ui.queue
 
+import android.content.Context
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,9 +17,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material3.Card
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -26,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -39,23 +44,45 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tomcat927.miscuploader.data.ConnectionManager
 import com.tomcat927.miscuploader.data.UploadRepository
 import com.tomcat927.miscuploader.data.db.HistoryEntity
 import com.tomcat927.miscuploader.data.db.UploadItemEntity
 import com.tomcat927.miscuploader.data.db.UploadState
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import org.json.JSONObject
+
+/** 归档状态数据(C):misc-sync.py 每轮写 /opt/misc/.sync/state.json(app 视角 /.sync/state.json) */
+data class ArchiveState(
+    val lastRunAt: Long?,
+    val pendingCount: Int?,
+    val vaultTotal: Int?,
+)
+
+data class ArchiveUiState(
+    val loading: Boolean = false,
+    val unavailable: Boolean = false,
+    val state: ArchiveState? = null,
+)
 
 @HiltViewModel
 class QueueViewModel @Inject constructor(
     private val repository: UploadRepository,
+    private val connection: ConnectionManager,
+    @ApplicationContext private val context: Context,
 ) : ViewModel() {
 
     /**
@@ -73,11 +100,47 @@ class QueueViewModel @Inject constructor(
     val history: StateFlow<List<HistoryEntity>> = repository.history
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    private val _archive = MutableStateFlow(ArchiveUiState())
+    val archive: StateFlow<ArchiveUiState> = _archive.asStateFlow()
+
+    init {
+        loadArchiveState()
+    }
+
+    /** 读服务器归档状态(C):下载 /.sync/state.json 解析;未连接/未部署/解析失败 = unavailable */
+    fun loadArchiveState() {
+        viewModelScope.launch {
+            _archive.value = ArchiveUiState(loading = true)
+            try {
+                val client = connection.clientOrNull()
+                    ?: throw IllegalStateException("未连接")
+                val f = File(context.cacheDir, "archive_state.json")
+                client.downloadTo(ARCHIVE_STATE_PATH, f)
+                val json = JSONObject(f.readText())
+                f.delete()
+                _archive.value = ArchiveUiState(
+                    state = ArchiveState(
+                        lastRunAt = json.optLong("last_run_at").takeIf { it > 0 },
+                        pendingCount = json.optInt("pending_count", -1).takeIf { it >= 0 },
+                        vaultTotal = json.optInt("vault_total", -1).takeIf { it >= 0 },
+                    ),
+                )
+            } catch (e: Exception) {
+                _archive.value = ArchiveUiState(unavailable = true)
+            }
+        }
+    }
+
     fun retry(id: Long) = repository.retry(id)
 
     fun retryAllFailed() = repository.retryAllFailed()
 
     fun clearFinished() = repository.clearFinished()
+
+    companion object {
+        /** 服务器实写 /opt/misc/.sync/state.json;app 账号 base_path=/misc,chroot 后即此路径(拍板 2026-10-05) */
+        const val ARCHIVE_STATE_PATH = "/.sync/state.json"
+    }
 }
 
 /** 队列页视图(A1):进行中队列 / 上传历史 */
@@ -90,7 +153,13 @@ private enum class QueueView(val label: String) {
 fun QueueScreen(viewModel: QueueViewModel = viewModel()) {
     val items by viewModel.items.collectAsState()
     val history by viewModel.history.collectAsState()
+    val archive by viewModel.archive.collectAsState()
     var view by rememberSaveable { mutableStateOf(QueueView.QUEUE) }
+
+    // 进页/切回队列 tab 自动刷新归档状态
+    LaunchedEffect(Unit) {
+        viewModel.loadArchiveState()
+    }
 
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -118,6 +187,11 @@ fun QueueScreen(viewModel: QueueViewModel = viewModel()) {
         }
         HorizontalDivider()
 
+        ArchiveStateCard(
+            state = archive,
+            onRefresh = viewModel::loadArchiveState,
+        )
+
         when (view) {
             QueueView.QUEUE -> QueueList(
                 items = items,
@@ -130,6 +204,46 @@ fun QueueScreen(viewModel: QueueViewModel = viewModel()) {
         }
     }
 }
+
+/** 归档状态卡(C):数据/读取中/未部署三态;数据源 = misc-sync.py 每轮写的 /.sync/state.json */
+@Composable
+private fun ArchiveStateCard(state: ArchiveUiState, onRefresh: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("归档状态", style = MaterialTheme.typography.labelLarge)
+                Text(
+                    when {
+                        state.loading -> "读取中…"
+                        state.state != null -> buildString {
+                            state.state.pendingCount?.let { append("待归档 $it 项") }
+                            state.state.vaultTotal?.let {
+                                if (isNotEmpty()) append(" · ")
+                                append("冷层已有 $it 项")
+                            }
+                            state.state.lastRunAt?.let {
+                                if (isNotEmpty()) append(" · ")
+                                append(ARCHIVE_DATE.format(Date(it * 1000)))
+                            }
+                        }.ifEmpty { "已就绪" }
+
+                        else -> "未获取到（未连接或服务器脚本未部署）"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            FilledTonalIconButton(onClick = onRefresh, modifier = Modifier.size(30.dp)) {
+                Icon(Icons.Filled.Refresh, contentDescription = "刷新归档状态", modifier = Modifier.size(17.dp))
+            }
+        }
+    }
+}
+
+private val ARCHIVE_DATE = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA)
 
 @Composable
 private fun QueueList(
