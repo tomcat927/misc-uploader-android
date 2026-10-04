@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -32,6 +33,7 @@ import com.tomcat927.miscuploader.BuildConfig
 fun UpdateCard(viewModel: UpdateViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
     val startupCheck by viewModel.startupCheckEnabled.collectAsState()
+    val showInstallConfirm by viewModel.showInstallConfirm.collectAsState()
     val context = LocalContext.current
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -133,6 +135,29 @@ fun UpdateCard(viewModel: UpdateViewModel = viewModel()) {
                     onCheckedChange = viewModel::setStartupCheckEnabled,
                 )
             }
+        }
+    }
+
+    // 主动检查发现新版本 → 弹窗确认是否下载安装;「暂不」后仍可用卡片内按钮;
+    // 启动静默检查发现的不弹窗(只 Snackbar + 卡片直显,拍板保持静默)
+    if (showInstallConfirm) {
+        (state as? UpdateState.Available)?.let { s ->
+            AlertDialog(
+                onDismissRequest = viewModel::dismissInstallConfirm,
+                title = { Text("发现新版本") },
+                text = {
+                    Text("最新版本 ${s.info.tagName}，是否下载安装？" + (s.info.releaseNotes?.let { "\n\n$it" } ?: ""))
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        viewModel.dismissInstallConfirm()
+                        viewModel.download()
+                    }) { Text("下载并安装") }
+                },
+                dismissButton = {
+                    TextButton(onClick = viewModel::dismissInstallConfirm) { Text("暂不") }
+                },
+            )
         }
     }
 }

@@ -39,6 +39,10 @@ class UpdateViewModel @Inject constructor(
     private val _state = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val state: StateFlow<UpdateState> = _state.asStateFlow()
 
+    /** 主动检查发现新版本 → 弹窗确认(启动静默检查发现的不弹窗,只 Snackbar+卡片直显) */
+    private val _showInstallConfirm = MutableStateFlow(false)
+    val showInstallConfirm: StateFlow<Boolean> = _showInstallConfirm.asStateFlow()
+
     private var downloaded: File? = null
 
     /** 启动静默检查发现的新版本事件(Main 页 Snackbar 提示用) */
@@ -72,11 +76,17 @@ class UpdateViewModel @Inject constructor(
             try {
                 val info = updateService.checkForUpdate()
                 _state.value = if (info == null) UpdateState.NoUpdate else UpdateState.Available(info)
+                // 主动检查发现新版 → 弹窗问是否下载安装
+                _showInstallConfirm.value = info != null
             } catch (e: Exception) {
                 // 异常类名带上,空 message 的网络异常也能定位
                 _state.value = UpdateState.Error("检查失败：${e.javaClass.simpleName}${e.message?.takeIf { it.isNotBlank() }?.let { m -> "：$m" } ?: ""}")
             }
         }
+    }
+
+    fun dismissInstallConfirm() {
+        _showInstallConfirm.value = false
     }
 
     fun download() {
