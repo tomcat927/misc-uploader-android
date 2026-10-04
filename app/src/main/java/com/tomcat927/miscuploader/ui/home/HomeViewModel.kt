@@ -564,8 +564,7 @@ class HomeViewModel @Inject constructor(
         val files = File(path).listFiles()
             ?: throw IOException(
                 if (path.contains("Android/data") || path.contains("Android/obb")) {
-                    "Android 11+ 系统限制：普通应用（含「所有文件访问」权限）无法读取此目录
-" +
+                    "Android 11+ 系统限制：普通应用（含「所有文件访问」权限）无法读取此目录\n" +
                         "可在原应用或其他文件管理器里选中文件「分享到杂物上传」"
                 } else {
                     "无法读取该目录（系统目录或权限不足）"
