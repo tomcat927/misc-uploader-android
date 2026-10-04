@@ -62,6 +62,7 @@ class SettingsRepository @Inject constructor(
         val UPLOAD_MAX_RETRIES = intPreferencesKey("upload_max_retries")
         val UPLOAD_WIFI_ONLY = booleanPreferencesKey("upload_wifi_only")
         val DEFAULT_SHARE_DIR = stringPreferencesKey("default_share_dir")
+        val QUEUE_PAUSED = booleanPreferencesKey("queue_paused")
     }
 
     /** 上传模式流(默认手动) */
@@ -185,6 +186,17 @@ class SettingsRepository @Inject constructor(
     suspend fun saveDefaultShareDir(dir: String) {
         context.dataStore.edit { prefs ->
             prefs[Keys.DEFAULT_SHARE_DIR] = UploadPlanning.normalizeDir(dir)
+        }
+    }
+
+    /** 队列暂停(拍板 2026-10-05:持久化——进程被杀/重启后仍是暂停态;暂停=不取新任务,进行中传完为止) */
+    val queuePausedFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.QUEUE_PAUSED] ?: false
+    }
+
+    suspend fun saveQueuePaused(paused: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.QUEUE_PAUSED] = paused
         }
     }
 

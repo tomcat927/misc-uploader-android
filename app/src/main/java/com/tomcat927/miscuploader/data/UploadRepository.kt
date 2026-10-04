@@ -16,7 +16,10 @@ import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -37,6 +40,14 @@ class UploadRepository @Inject constructor(
 
     /** 上传历史(A1):sha→最新落点,展示最近 500 条(库存上限一万,自动修剪) */
     val history: Flow<List<HistoryEntity>> = dao.observeRecentHistory(limit = 500)
+
+    /** 队列暂停(拍板 2026-10-05):持久化,服务网关轮询此状态 */
+    val queuePaused: StateFlow<Boolean> = settings.queuePausedFlow
+        .stateIn(appScope, SharingStarted.Eagerly, false)
+
+    fun setQueuePaused(paused: Boolean) {
+        appScope.launch { settings.saveQueuePaused(paused) }
+    }
 
     /**
      * 入队并拉起前台服务(拍板 A2:目标目录在入队侧规划——手动模式 = 所选目录,

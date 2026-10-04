@@ -17,6 +17,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Schedule
@@ -84,6 +86,11 @@ class QueueViewModel @Inject constructor(
     private val connection: ConnectionManager,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
+
+    /** 队列暂停(拍板 2026-10-05):持久化,杀进程重启仍保持 */
+    val queuePaused: StateFlow<Boolean> = repository.queuePaused
+
+    fun togglePause() = repository.setQueuePaused(!repository.queuePaused.value)
 
     /**
      * 拍板(对齐桌面端):进行中(pending/hash/uploading/cooldown)按入队序置顶;
@@ -195,6 +202,8 @@ fun QueueScreen(viewModel: QueueViewModel = viewModel()) {
         when (view) {
             QueueView.QUEUE -> QueueList(
                 items = items,
+                paused = queuePaused,
+                onTogglePause = viewModel::togglePause,
                 onRetryAllFailed = viewModel::retryAllFailed,
                 onClearFinished = viewModel::clearFinished,
                 onRetry = viewModel::retry,
@@ -248,6 +257,8 @@ private val ARCHIVE_DATE = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA)
 @Composable
 private fun QueueList(
     items: List<UploadItemEntity>,
+    paused: Boolean,
+    onTogglePause: () -> Unit,
     onRetryAllFailed: () -> Unit,
     onClearFinished: () -> Unit,
     onRetry: (Long) -> Unit,
@@ -268,7 +279,17 @@ private fun QueueList(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
+            TextButton(onClick = onTogglePause) {
+                Icon(
+                    if (paused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(if (paused) "继续" else "暂停")
+            }
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onRetryAllFailed, enabled = items.any { it.state == UploadState.FAILED }) {
                 Text("重试全部失败")

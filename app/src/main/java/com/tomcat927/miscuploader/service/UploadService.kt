@@ -29,6 +29,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -61,6 +62,7 @@ class UploadService : Service() {
     private var running = false
     private var maxRetries = 3
     private var wifiGateLogged = false
+    private var pauseLogged = false
     private var notificationJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -99,6 +101,19 @@ class UploadService : Service() {
             if (wifiGateLogged) {
                 wifiGateLogged = false
                 logger.log("service", "Wi-Fi 已恢复，队列续跑")
+            }
+            // 队列暂停(拍板 2026-10-05):不取新任务,进行中的传完为止;1s 轮询,即时生效
+            if (settings.queuePausedFlow.first()) {
+                if (!pauseLogged) {
+                    pauseLogged = true
+                    logger.log("service", "队列已暂停（用户手动）")
+                }
+                delay(1_000L)
+                continue
+            }
+            if (pauseLogged) {
+                pauseLogged = false
+                logger.log("service", "队列继续")
             }
             val item = claimMutex.withLock { repository.claimNext() } ?: break
             process(item)
@@ -207,11 +222,13 @@ class UploadService : Service() {
     private fun observeQueueForNotification() {
         notificationJob?.cancel()
         notificationJob = serviceScope.launch {
-            repository.items.collect { items ->
+            combine(repository.items, settings.queuePausedFlow) { items, paused ->
                 val inFlight = items.filter { it.state in UploadState.IN_FLIGHT }
                 val done = items.count { it.state == UploadState.DONE }
                 val active = items.firstOrNull { it.state == UploadState.UPLOADING || it.state == UploadState.HASHING }
-                val text = when {
+                when {
+                    paused && active != null -> "暂停中，等当前项完成（${active.displayName}）"
+                    paused -> "队列已暂停（待传 ${inFlight.size} 项）"
                     active != null -> {
                         val label = if (active.state == UploadState.HASHING) "校验中" else "上传中"
                         "$label ${active.displayName}（$done 完成，${inFlight.size} 在队列）"
@@ -219,8 +236,7 @@ class UploadService : Service() {
                     inFlight.isNotEmpty() -> "等待上传 ${inFlight.size} 项（$done 完成）"
                     else -> "上传完成"
                 }
-                notify(text)
-            }
+            }.collect { notify(it) }
         }
     }
 
