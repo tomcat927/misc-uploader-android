@@ -15,6 +15,7 @@ import com.tomcat927.miscuploader.data.UploadTask
 import com.tomcat927.miscuploader.ui.viewer.FileKind
 import com.tomcat927.miscuploader.ui.viewer.REMOTE_PREVIEW_LIMIT
 import com.tomcat927.miscuploader.ui.viewer.ViewerRequest
+import com.tomcat927.miscuploader.ui.viewer.openWithSystem
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
@@ -309,6 +310,11 @@ class HomeViewModel @Inject constructor(
     fun openFile(side: Side, item: FileItem) {
         if (item.isDir) return
         val kind = FileKind.of(item.name)
+        if (kind == FileKind.OTHER && side == Side.LEFT) {
+            // 本地其他类型:不进查看器,直接弹系统「打开方式」(MT 管理器同款,拍板 2026-10-05)
+            openLocalWithSystem(item)
+            return
+        }
         if (side == Side.RIGHT && kind == FileKind.TEXT) {
             viewModelScope.launch {
                 try {
@@ -349,6 +355,18 @@ class HomeViewModel @Inject constructor(
 
     fun closeViewer() {
         _viewerRequest.value = null
+    }
+
+    /** 本地其他类型:跳过查看器,直接弹系统「打开方式」选择器 */
+    fun openLocalWithSystem(item: FileItem) {
+        val dir = stateOf(Side.LEFT).path
+        viewModelScope.launch {
+            try {
+                openWithSystem(context, File(dir, item.name))
+            } catch (e: Exception) {
+                events.emit("打开失败：${e.message ?: e.javaClass.simpleName}")
+            }
+        }
     }
 
     /** 查看器闭包:本地文件(查看器全屏打开期间两栏不可操作,basePath 稳定) */

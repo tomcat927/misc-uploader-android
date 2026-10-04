@@ -101,10 +101,13 @@ fun openWithSystem(context: Context, file: File) {
     val ext = file.extension.lowercase()
     val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    val view = Intent(Intent.ACTION_VIEW)
+        .setDataAndType(uri, mime)
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    // 拍板(2026-10-05):MT 管理器同款——每次弹系统「打开方式」选择器,不直开默认应用
     context.startActivity(
-        Intent(Intent.ACTION_VIEW)
-            .setDataAndType(uri, mime)
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK),
+        Intent.createChooser(view, "打开方式")
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
     )
 }
 
@@ -135,7 +138,7 @@ fun FileViewerDialog(
             when (request.kind) {
                 FileKind.IMAGE -> ImagePager(request, localFile, remoteRawUrl)
                 FileKind.TEXT -> TextViewer(request, localFile, remoteDownload)
-                FileKind.OTHER -> DelegateViewer(request, localFile, remoteDownload)
+                FileKind.OTHER -> DelegateViewer(request, localFile, remoteDownload, onClose)
             }
 
             // 顶部:标题 + 关闭
@@ -397,6 +400,7 @@ private fun DelegateViewer(
     request: ViewerRequest,
     localFile: (FileItem) -> File,
     remoteDownload: suspend (FileItem, onProgress: (Float) -> Unit) -> File,
+    onClose: () -> Unit,
 ) {
     val item = request.items.first()
     val context = LocalContext.current
@@ -411,6 +415,8 @@ private fun DelegateViewer(
                 remoteDownload(item) { p -> progress = p }
             }
             openWithSystem(context, f)
+            // 「打开方式」选择器已弹出,查看页退场(拍板 2026-10-05)
+            onClose()
         } catch (e: OpenListApiException) {
             error = e.message ?: "打开失败"
         } catch (e: Exception) {
