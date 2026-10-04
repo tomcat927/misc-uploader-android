@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 class UpdateCheckManager @Inject constructor(
     private val updateService: UpdateService,
     private val settings: SettingsRepository,
+    private val logger: com.tomcat927.miscuploader.data.AppLogger,
 ) {
 
     companion object {
@@ -43,6 +44,7 @@ class UpdateCheckManager @Inject constructor(
         delay(STARTUP_DELAY_MS)
         if (!settings.startupUpdateCheckOnce()) {
             Log.i(TAG, "启动检查更新已关闭,跳过")
+            logger.log("update", "启动检查更新已关闭，跳过")
             return
         }
         checkQuietly()
@@ -57,6 +59,7 @@ class UpdateCheckManager @Inject constructor(
             if (info != null && isNew) foundEvents.emit(info)
         } catch (e: Exception) {
             Log.w(TAG, "检查更新失败: ${e.javaClass.simpleName}: ${e.message}")
+            logger.log("update", "启动/静默检查更新失败：${e.javaClass.simpleName}：${e.message}")
         }
     }
 }

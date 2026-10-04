@@ -26,6 +26,7 @@ import org.json.JSONObject
 @Singleton
 class UpdateService @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val logger: com.tomcat927.miscuploader.data.AppLogger,
 ) {
 
     companion object {
@@ -60,11 +61,20 @@ class UpdateService @Inject constructor(
 
     suspend fun checkForUpdate(): UpdateInfo? = withContext(Dispatchers.IO) {
         val current = currentVersionCode()
+        logger.log("update", "检查更新：当前 versionCode=$current")
         // 双源都不可达 → 明确报错(而不是误报"已是最新");网络瞬断由 readText 内部重试兜底
         val info = checkFromManifest()
             ?: checkFromGitHubApi()
-            ?: throw IllegalStateException("无法连接更新源（gh-proxy 与 GitHub 均不可达，请检查网络或代理）")
+            ?: run {
+                logger.log("update", "双源均不可达（gh-proxy / GitHub 清单 / GitHub API）")
+                throw IllegalStateException("无法连接更新源（gh-proxy 与 GitHub 均不可达，请检查网络或代理）")
+            }
         Log.i(TAG, "current=$current latest=${info.versionCode}")
+        logger.log(
+            "update",
+            "远端 ${info.tagName}（versionCode=${info.versionCode}）" +
+                if (info.versionCode > current) "→ 有新版" else "→ 已是最新",
+        )
         if (info.versionCode > current) info else null
     }
 
@@ -76,12 +86,24 @@ class UpdateService @Inject constructor(
 
     private suspend fun checkFromManifest(): UpdateInfo? {
         for (url in manifestUrls) {
-            val body = readText(url) ?: continue
-            val json = runCatching { JSONObject(body) }.getOrNull() ?: continue
+            val body = readText(url)
+            if (body == null) {
+                logger.log("update", "清单源不可达：$url")
+                continue
+            }
+            val json = runCatching { JSONObject(body) }.getOrNull()
+            if (json == null) {
+                logger.log("update", "清单源响应非 JSON：$url")
+                continue
+            }
             val versionCode = json.optLong("version_code", -1L)
             val apk = json.optString("apk")
             val githubApk = json.optString("github_apk")
-            if (versionCode <= 0 || apk.isEmpty() || githubApk.isEmpty()) continue
+            if (versionCode <= 0 || apk.isEmpty() || githubApk.isEmpty()) {
+                logger.log("update", "清单源字段缺失（version_code=$versionCode）：$url")
+                continue
+            }
+            logger.log("update", "清单源命中 versionCode=$versionCode：$url")
             return UpdateInfo(
                 tagName = json.optString("tag_name"),
                 versionCode = versionCode,
@@ -99,10 +121,21 @@ class UpdateService @Inject constructor(
 
     private suspend fun checkFromGitHubApi(): UpdateInfo? {
         val body = readText(apiUrl, mapOf("Accept" to "application/vnd.github+json", "User-Agent" to REPO))
-            ?: return null
-        val json = runCatching { JSONObject(body) }.getOrNull() ?: return null
+        if (body == null) {
+            logger.log("update", "GitHub API 不可达：$apiUrl")
+            return null
+        }
+        val json = runCatching { JSONObject(body) }.getOrNull()
+        if (json == null) {
+            logger.log("update", "GitHub API 响应非 JSON")
+            return null
+        }
         val tagName = json.optString("tag_name")
-        val assets = json.optJSONArray("assets") ?: return null
+        val assets = json.optJSONArray("assets")
+        if (assets == null) {
+            logger.log("update", "GitHub API 响应缺 assets：$tagName")
+            return null
+        }
         var apkUrl = ""
         var checksumUrl = ""
         for (i in 0 until assets.length()) {
@@ -112,8 +145,16 @@ class UpdateService @Inject constructor(
             if (name.endsWith(".apk")) apkUrl = url
             else if (name.endsWith(".apk.sha256")) checksumUrl = url
         }
-        if (apkUrl.isEmpty()) return null
-        val versionCode = versionCodeFromTag(tagName) ?: return null
+        if (apkUrl.isEmpty()) {
+            logger.log("update", "GitHub API 响应缺 APK 资产：$tagName")
+            return null
+        }
+        val versionCode = versionCodeFromTag(tagName)
+        if (versionCode == null) {
+            logger.log("update", "GitHub API tag 无法解析 versionCode：$tagName")
+            return null
+        }
+        logger.log("update", "GitHub API 命中 versionCode=$versionCode")
         return UpdateInfo(
             tagName = tagName,
             versionCode = versionCode,

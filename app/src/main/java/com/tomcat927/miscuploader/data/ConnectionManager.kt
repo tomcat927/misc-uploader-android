@@ -37,6 +37,15 @@ class ConnectionManager @Inject constructor(
 
     suspend fun connect(config: ServerConfig) {
         _state.value = State.Connecting
+        // 诊断日志(2026-10-05):目标地址+端口缺失提示——ECONNREFUSED 最常见原因就是地址没带 :端口
+        val portHint = runCatching {
+            if (java.net.URI(config.baseUrl).port == -1) {
+                "（地址未带端口：将连默认 443/80，若服务不在该端口请补如 :5245）"
+            } else {
+                ""
+            }
+        }.getOrDefault("")
+        logger.log("connect", "开始连接 ${config.baseUrl}$portHint")
         try {
             val client = OpenListClient(
                 baseUrl = config.baseUrl,
@@ -45,17 +54,18 @@ class ConnectionManager @Inject constructor(
                 baseClient = okHttpClient,
             )
             client.login()
+            logger.log("connect", "登录成功 ${config.baseUrl}")
             val entries = client.list("/")
             _state.value = State.Connected(client, entries.size)
-            logger.log("connect", "已连接 ${config.baseUrl}（根目录 ${entries.size} 项）")
+            logger.log("connect", "已连接（根目录 ${entries.size} 项）")
         } catch (e: OpenListApiException) {
-            logger.log("connect", "连接失败：${e.message}")
+            logger.log("connect", "连接失败（API code=${e.code}）：${e.message} · 目标 ${config.baseUrl}")
             _state.value = State.Failed(e.message ?: "请求失败")
         } catch (e: IOException) {
-            logger.log("connect", "连接失败：网络错误 ${e.message}")
+            logger.log("connect", "连接失败（网络 ${e.javaClass.simpleName}）：${e.message} · 目标 ${config.baseUrl}")
             _state.value = State.Failed("网络错误：${e.message ?: "无法连接"}")
         } catch (e: Exception) {
-            logger.log("connect", "连接失败：${e.message}")
+            logger.log("connect", "连接失败（${e.javaClass.simpleName}）：${e.message} · 目标 ${config.baseUrl}")
             _state.value = State.Failed(e.message ?: e.javaClass.simpleName)
         }
     }
