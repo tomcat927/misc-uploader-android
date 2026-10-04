@@ -22,7 +22,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tomcat927.miscuploader.BuildConfig
@@ -32,7 +31,6 @@ import com.tomcat927.miscuploader.BuildConfig
 fun UpdateCard(viewModel: UpdateViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
     val startupCheck by viewModel.startupCheckEnabled.collectAsState()
-    val context = LocalContext.current
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -91,7 +89,7 @@ fun UpdateCard(viewModel: UpdateViewModel = viewModel()) {
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary,
                     )
-                    Button(onClick = { viewModel.install(context) }, modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = viewModel::install, modifier = Modifier.fillMaxWidth()) {
                         Text("安装")
                     }
                 }

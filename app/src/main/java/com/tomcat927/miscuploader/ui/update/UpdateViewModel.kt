@@ -10,6 +10,7 @@ import com.tomcat927.miscuploader.data.SettingsRepository
 import com.tomcat927.miscuploader.update.UpdateCheckManager
 import com.tomcat927.miscuploader.update.UpdateService
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -32,6 +33,7 @@ sealed interface UpdateState {
 
 @HiltViewModel
 class UpdateViewModel @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val updateService: UpdateService,
     private val updateCheckManager: UpdateCheckManager,
     private val settings: SettingsRepository,
@@ -138,22 +140,26 @@ class UpdateViewModel @Inject constructor(
                 }
                 downloaded = file
                 _state.value = UpdateState.ReadyToInstall(file, info.tagName)
+                // 一键到底(2026-10-04 拍板): 弹窗已确认过安装意图,下载完成自动拉起安装器;
+                // 未授权「安装未知应用」时跳授权页,授权返回后由卡片「安装」键续接
+                install()
             } catch (e: Exception) {
                 _state.value = UpdateState.Error("下载失败：${e.javaClass.simpleName}${e.message?.takeIf { it.isNotBlank() }?.let { m -> "：$m" } ?: ""}")
             }
         }
     }
 
-    /** 未授权「安装未知应用」时跳系统设置(带 package URI 直达本应用开关);授权后用户回来再点一次安装 */
-    fun install(context: Context) {
+    /** 拉起系统安装器;未授权「安装未知应用」时先跳授权页(带 package URI 直达本应用开关) */
+    fun install() {
         val file = downloaded ?: return
         if (context.packageManager.canRequestPackageInstalls()) {
             context.startActivity(updateService.createInstallIntent(file))
         } else {
+            // Application context 启动 Activity 必须带 NEW_TASK( Activity context 才可省)
             val intent = Intent(
                 Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
                 Uri.parse("package:${context.packageName}"),
-            )
+            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
         }
     }
