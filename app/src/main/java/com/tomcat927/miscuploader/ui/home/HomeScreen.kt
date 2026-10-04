@@ -84,12 +84,15 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val expanded by viewModel.expandedSide.collectAsState()
     val storageGranted by viewModel.storageGranted.collectAsState()
     val selectedLeft by viewModel.selectedLeft.collectAsState()
+    val selectedRight by viewModel.selectedRight.collectAsState()
     val uploadMode by viewModel.uploadMode.collectAsState()
     val touchFocus by viewModel.touchFocus.collectAsState()
     val viewerRequest by viewModel.viewerRequest.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var mkdirSide by remember { mutableStateOf<Side?>(null) }
     var uploadConfirm by remember { mutableStateOf(false) }
+    var remoteMovePicker by remember { mutableStateOf(false) }
+    var remoteDeleteConfirm by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { snackbarHostState.showSnackbar(it) }
@@ -136,6 +139,8 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onItemLongPress = viewModel::onItemLongPress,
                 onItemToggleSelect = viewModel::toggleSelect,
                 onUploadSelection = { uploadConfirm = true },
+                onMoveSelection = {},
+                onDeleteSelection = {},
                 onCancelSelection = viewModel::clearSelection,
                 modifier = Modifier.weight(leftWeight).fillMaxHeight(),
             )
@@ -154,8 +159,8 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 focusEnabled = touchFocus,
                 storageGranted = true,
                 breadcrumb = viewModel.breadcrumbOf(Side.RIGHT, right.path),
-                selectionMode = false,
-                selected = emptySet(),
+                selectionMode = selectedRight.isNotEmpty(),
+                selected = selectedRight,
                 onPaneTouched = { viewModel.focus(Side.RIGHT) },
                 onExpandToggle = { viewModel.toggleExpand(Side.RIGHT) },
                 onNavigate = { viewModel.navigate(Side.RIGHT, it) },
@@ -164,10 +169,12 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onRefresh = { viewModel.refresh(Side.RIGHT) },
                 onMkdir = { mkdirSide = Side.RIGHT },
                 onOpenFile = { viewModel.openFile(Side.RIGHT, it) },
-                onItemLongPress = {},
-                onItemToggleSelect = {},
+                onItemLongPress = viewModel::onItemLongPressRight,
+                onItemToggleSelect = viewModel::toggleSelectRight,
                 onUploadSelection = {},
-                onCancelSelection = {},
+                onMoveSelection = { remoteMovePicker = true },
+                onDeleteSelection = { remoteDeleteConfirm = true },
+                onCancelSelection = viewModel::clearSelectionRight,
                 modifier = Modifier.weight(rightWeight).fillMaxHeight(),
             )
         }
@@ -212,6 +219,30 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
         )
     }
 
+    // 远程整理(拍板 2026-10-04):移动目标选择器 / 删除硬确认
+    if (remoteMovePicker && selectedRight.isNotEmpty()) {
+        RemoteDirPickerDialog(
+            srcDir = right.path,
+            listDirs = viewModel::listRemoteDirs,
+            onConfirm = { dst ->
+                viewModel.moveSelectedRightTo(dst)
+                remoteMovePicker = false
+            },
+            onDismiss = { remoteMovePicker = false },
+        )
+    }
+
+    if (remoteDeleteConfirm && selectedRight.isNotEmpty()) {
+        DeleteConfirmDialog(
+            paths = selectedRight.map { if (right.path == "/") "/$it" else "${right.path}/$it" },
+            onConfirm = {
+                viewModel.deleteSelectedRight()
+                remoteDeleteConfirm = false
+            },
+            onDismiss = { remoteDeleteConfirm = false },
+        )
+    }
+
     if (uploadConfirm && selectedLeft.isNotEmpty()) {
         val autoMode = uploadMode == UploadMode.AUTO_DATE
         UploadConfirmDialog(
@@ -253,6 +284,8 @@ private fun BrowserPane(
     onItemLongPress: (FileItem) -> Unit,
     onItemToggleSelect: (FileItem) -> Unit,
     onUploadSelection: () -> Unit,
+    onMoveSelection: () -> Unit,
+    onDeleteSelection: () -> Unit,
     onCancelSelection: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -296,7 +329,7 @@ private fun BrowserPane(
                 else -> CompactFileList(
                     state, breadcrumb.size > 1, onNavigate, onNavigateUp,
                     onItemLongPress = onItemLongPress, selectionMode = selectionMode, selected = selected,
-                    onItemToggleSelect = onItemToggleSelect, selectionEnabled = side == Side.LEFT,
+                    onItemToggleSelect = onItemToggleSelect, selectionEnabled = true,
                     onOpenFile = onOpenFile,
                 )
             }
@@ -306,26 +339,44 @@ private fun BrowserPane(
             }
         }
 
-        // 底部操作条:多选态显示上传操作;普通态显示新建文件夹
+        // 底部操作条:多选态显示操作(左=上传,右=移动/删除);普通态显示新建文件夹
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(if (isFocused) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (selectionMode && side == Side.LEFT) {
+            if (selectionMode) {
                 TextButton(onClick = onCancelSelection) { Text("取消") }
                 Spacer(Modifier.weight(1f))
                 Text("已选 ${selected.size}", style = MaterialTheme.typography.labelLarge)
                 Spacer(Modifier.weight(1f))
-                Button(
-                    onClick = onUploadSelection,
-                    enabled = selected.isNotEmpty(),
-                    modifier = Modifier.padding(end = 10.dp),
-                ) {
-                    Icon(Icons.Filled.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("上传")
+                when (side) {
+                    Side.LEFT -> Button(
+                        onClick = onUploadSelection,
+                        enabled = selected.isNotEmpty(),
+                        modifier = Modifier.padding(end = 10.dp),
+                    ) {
+                        Icon(Icons.Filled.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("上传")
+                    }
+
+                    Side.RIGHT -> {
+                        Button(
+                            onClick = onMoveSelection,
+                            enabled = selected.isNotEmpty(),
+                        ) {
+                            Text("移动到…")
+                        }
+                        TextButton(
+                            onClick = onDeleteSelection,
+                            enabled = selected.isNotEmpty(),
+                            modifier = Modifier.padding(end = 10.dp),
+                        ) {
+                            Text("删除", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 }
             } else {
                 TextButton(onClick = onMkdir) {
@@ -638,6 +689,146 @@ private fun UploadConfirmDialog(count: Int, targetDesc: String, onConfirm: () ->
         },
         confirmButton = {
             TextButton(onClick = onConfirm) { Text("执行上传") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}
+
+/** 远程移动目标选择器(拍板 2026-10-04):从仓库根起导航,仅列目录;目标不能是来源目录 */
+@Composable
+private fun RemoteDirPickerDialog(
+    srcDir: String,
+    listDirs: suspend (String) -> List<String>,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var path by remember { mutableStateOf("/") }
+    var dirs by remember { mutableStateOf<List<String>?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(path) {
+        error = null
+        try {
+            dirs = listDirs(path)
+        } catch (e: Exception) {
+            dirs = emptyList()
+            error = e.message ?: "加载失败"
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("移动到") },
+        text = {
+            Column {
+                Text(
+                    "目标目录：$path",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.height(280.dp)) {
+                    val loaded = dirs
+                    when {
+                        loaded == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        }
+
+                        else -> LazyColumn(Modifier.fillMaxSize()) {
+                            if (path != "/") {
+                                item(key = "..") {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                path = path.substringBeforeLast('/').ifEmpty { "/" }
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Folder,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp),
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("..", style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                }
+                            }
+                            items(loaded, key = { it }) { name ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            path = if (path == "/") "/$name" else "$path/$name"
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Folder,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(name, style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
+                        }
+                    }
+                }
+                error?.let {
+                    Text(
+                        it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(path) }, enabled = path != srcDir) {
+                Text("移动到这里")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}
+
+/** 远程删除硬确认(拍板:明示完整路径;文件夹递归删;误删由云盘网页回收站兜底) */
+@Composable
+private fun DeleteConfirmDialog(paths: List<String>, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("删除", color = MaterialTheme.colorScheme.error) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("将永久删除 ${paths.size} 项（文件夹连同内容一起删除）：")
+                Text(
+                    paths.joinToString("\n"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 6,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "误删可在存储云盘的网页端回收站尝试恢复（保留期由云盘决定）",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("删除", color = MaterialTheme.colorScheme.error)
+            }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }

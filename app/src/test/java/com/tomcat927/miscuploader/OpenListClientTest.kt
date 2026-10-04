@@ -225,4 +225,45 @@ class OpenListClientTest {
         }
         tmp.delete()
     }
+
+    @Test
+    fun `move and remove send snake_case bodies to correct routes`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(putOk()) // move
+        server.enqueue(putOk()) // remove
+        val client = newClient()
+        client.login()
+
+        client.move(srcDir = "/auto/2026/10", names = listOf("a.png", "docs"), dstDir = "/docs")
+        client.remove(dir = "/docs", names = listOf("a.png"))
+
+        server.takeRequest() // login
+        val moveReq = server.takeRequest()
+        assertEquals("/api/fs/move", moveReq.path)
+        val moveBody = moveReq.body.readUtf8()
+        assertTrue(moveBody.contains("\"src_dir\":\"/auto/2026/10\""))
+        assertTrue(moveBody.contains("\"dst_dir\":\"/docs\""))
+        assertTrue(moveBody.contains("\"names\":[\"a.png\",\"docs\"]"))
+
+        val removeReq = server.takeRequest()
+        assertEquals("/api/fs/remove", removeReq.path)
+        val removeBody = removeReq.body.readUtf8()
+        assertTrue(removeBody.contains("\"dir\":\"/docs\""))
+        assertTrue(removeBody.contains("\"names\":[\"a.png\"]"))
+    }
+
+    @Test
+    fun `move with permission denied surfaces code 403`() = runTest {
+        server.enqueue(loginOk())
+        server.enqueue(MockResponse().setBody("""{"code":403,"message":"permission denied"}"""))
+        val client = newClient()
+        client.login()
+
+        try {
+            client.move("/", listOf("x.png"), "/docs")
+            fail("expected OpenListApiException 403")
+        } catch (e: OpenListApiException) {
+            assertEquals(403, e.code)
+        }
+    }
 }

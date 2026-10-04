@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -153,6 +154,27 @@ class OpenListClient(
         }
     }
 
+    // 字段名已对照 OpenList 源码 server/handles/fsmanage.go 核实(坑 5:不凭训练数据硬写):
+    // fs/move = {src_dir,dst_dir,names}, fs/remove = {dir,names};权限位 CanMove/CanRemove
+    override suspend fun move(srcDir: String, names: List<String>, dstDir: String) {
+        val body = postJson(
+            "$baseUrl/api/fs/move",
+            json.encodeToString(
+                MoveRequest.serializer(),
+                MoveRequest(srcDir = srcDir, dstDir = dstDir, names = names),
+            ),
+        )
+        requireCode(body)
+    }
+
+    override suspend fun remove(dir: String, names: List<String>) {
+        val body = postJson(
+            "$baseUrl/api/fs/remove",
+            json.encodeToString(RemoveRequest.serializer(), RemoveRequest(dir = dir, names = names)),
+        )
+        requireCode(body)
+    }
+
     /**
      * raw_url host 修正(避坑指南实测坑:有些部署返回的 raw_url 主机/端口与连接地址不同,
      * 如 127.0.0.1:5244 直跑地址)——取其 path+query 拼到当前连接的 scheme+authority。
@@ -263,6 +285,16 @@ private data class LoginRequest(val username: String, val password: String)
 
 @Serializable
 private data class MkdirRequest(val path: String)
+
+@Serializable
+private data class MoveRequest(
+    @SerialName("src_dir") val srcDir: String,
+    @SerialName("dst_dir") val dstDir: String,
+    val names: List<String>,
+)
+
+@Serializable
+private data class RemoveRequest(val dir: String, val names: List<String>)
 
 /** 客户端字节计数(拍板:上传进度的唯一现实来源,协议无关) */
 private class ProgressRequestBody(

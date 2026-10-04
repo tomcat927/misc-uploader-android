@@ -37,6 +37,15 @@ interface RemoteStorage {
     )
 
     /**
+     * 批量移动(srcDir 下 names[] → dstDir;OpenList fs/move,同存储为元数据级改名)。
+     * 跨存储驱动时服务端可能拒绝,错误由调用方展示。
+     */
+    suspend fun move(srcDir: String, names: List<String>, dstDir: String)
+
+    /** 批量删除(dir 下 names[];文件夹连同内容递归删除;云盘侧回收站兜底) */
+    suspend fun remove(dir: String, names: List<String>)
+
+    /**
      * 流式上传,内存恒定。
      * @param remotePath 目标完整路径(以 "/" 开头,含文件名)
      * @param overwrite false 时同名存在 → OpenListApiException(403),由调用方当"已存在"闸门

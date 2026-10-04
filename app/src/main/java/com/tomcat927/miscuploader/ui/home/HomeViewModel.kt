@@ -76,11 +76,95 @@ class HomeViewModel @Inject constructor(
     /** 一次性提示(建目录结果等) */
     val events = MutableSharedFlow<String>(extraBufferCapacity = 8)
 
-    /** 多选(拍板 M3:仅本地侧可选;换目录即清空) */
+    /** 多选(拍板 M3:本地侧可选,2026-10-04 起远程侧同样可选用于整理;换目录即清空) */
     private val _selectedLeft = MutableStateFlow<Set<String>>(emptySet())
     val selectedLeft: StateFlow<Set<String>> = _selectedLeft.asStateFlow()
     val selectionMode: Boolean
         get() = _selectedLeft.value.isNotEmpty()
+
+    // ---- 远程多选与整理(拍板 2026-10-04:移动+删除;根目录 auto/ 本体受保护) ----
+
+    /** 受保护条目:仓库根的 auto/ 本体(其下文件/子目录可自由整理) */
+    private fun isProtectedRemoteEntry(path: String, name: String): Boolean =
+        path == "/" && name == UploadPlanning.AUTO_ROOT
+
+    private val _selectedRight = MutableStateFlow<Set<String>>(emptySet())
+    val selectedRight: StateFlow<Set<String>> = _selectedRight.asStateFlow()
+
+    fun onItemLongPressRight(item: FileItem) {
+        if (item.isDir && isProtectedRemoteEntry(_right.value.path, item.name)) {
+            viewModelScope.launch { events.emit("auto/ 目录受保护，不能移动或删除") }
+            return
+        }
+        _selectedRight.update { it + item.name }
+    }
+
+    fun toggleSelectRight(item: FileItem) {
+        if (item.isDir && isProtectedRemoteEntry(_right.value.path, item.name)) {
+            viewModelScope.launch { events.emit("auto/ 目录受保护，不能移动或删除") }
+            return
+        }
+        _selectedRight.update { set -> if (item.name in set) set - item.name else set + item.name }
+    }
+
+    fun clearSelectionRight() {
+        _selectedRight.value = emptySet()
+    }
+
+    /** 远程多选移动(auto/ 根不可作为目标,防散件进归档根;成功后源刷新+目标预热索引) */
+    fun moveSelectedRightTo(dstDir: String) {
+        val selected = _selectedRight.value
+        if (selected.isEmpty()) return
+        val srcDir = _right.value.path
+        viewModelScope.launch {
+            when {
+                dstDir == srcDir -> events.emit("目标目录与当前目录相同")
+                dstDir == "/${UploadPlanning.AUTO_ROOT}" ->
+                    events.emit("auto/ 根目录不允许作为目标，请选其子目录")
+
+                else -> try {
+                    val client = connection.clientOrNull()
+                        ?: throw IllegalStateException("未连接——请到「设置」连接服务器")
+                    client.move(srcDir, selected.toList(), dstDir)
+                    _selectedRight.value = emptySet()
+                    events.emit("已移动 ${selected.size} 项到 $dstDir")
+                    runCatching { client.list(dstDir, refresh = true) } // 预热 OpenList 缓存(对齐上传语义)
+                    load(Side.RIGHT, srcDir, refresh = true)
+                } catch (e: Exception) {
+                    events.emit(e.message ?: "移动失败")
+                }
+            }
+        }
+    }
+
+    /** 远程多选删除(硬确认框在 UI 层;文件夹递归删;误删由云盘网页回收站兜底) */
+    fun deleteSelectedRight() {
+        val selected = _selectedRight.value
+        if (selected.isEmpty()) return
+        val dir = _right.value.path
+        viewModelScope.launch {
+            try {
+                val client = connection.clientOrNull()
+                    ?: throw IllegalStateException("未连接——请到「设置」连接服务器")
+                client.remove(dir, selected.toList())
+                _selectedRight.value = emptySet()
+                events.emit("已删除 ${selected.size} 项")
+                load(Side.RIGHT, dir, refresh = true)
+            } catch (e: Exception) {
+                events.emit(e.message ?: "删除失败")
+            }
+        }
+    }
+
+    /** 「移动到…」目录选择器数据源:某远程目录下的子目录(仅目录,名称升序) */
+    suspend fun listRemoteDirs(path: String): List<String> {
+        val client = connection.clientOrNull()
+            ?: throw IllegalStateException("未连接——请到「设置」连接服务器")
+        return client.list(path)
+            .filter { it.isDir }
+            .map { it.name }
+            .sortedWith(compareBy { it.lowercase() })
+    }
 
     /** 上传模式(拍板 A2:确认框文案与目标规划用) */
     val uploadMode: StateFlow<UploadMode> = settings.uploadModeFlow
@@ -374,8 +458,10 @@ class HomeViewModel @Inject constructor(
     // ---- 内部 ----
 
     private fun load(side: Side, path: String, refresh: Boolean = false) {
-        // 换目录即清空多选(拍板:多选不跨目录保留)
-        if (side == Side.LEFT && stateFlowOf(side).value.path != path) _selectedLeft.value = emptySet()
+        // 换目录即清空多选(拍板:多选不跨目录保留;本地/远程同规则)
+        if (stateFlowOf(side).value.path != path) {
+            if (side == Side.LEFT) _selectedLeft.value = emptySet() else _selectedRight.value = emptySet()
+        }
         stateFlowOf(side).update { it.copy(path = path, loading = true, error = null) }
         viewModelScope.launch {
             try {
