@@ -55,7 +55,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.tomcat927.miscuploader.core.OpenListApiException
-import FileItem
+import com.tomcat927.miscuploader.ui.home.FileItem
 import java.io.File
 
 /** 文件大类(拍板:图片/文本内置查看,其余委托系统;hex/zip/apk 不做) */

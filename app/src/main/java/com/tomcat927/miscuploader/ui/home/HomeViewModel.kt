@@ -12,7 +12,6 @@ import com.tomcat927.miscuploader.data.UploadMode
 import com.tomcat927.miscuploader.data.UploadPlanning
 import com.tomcat927.miscuploader.data.UploadRepository
 import com.tomcat927.miscuploader.data.UploadTask
-import com.tomcat927.miscuploader.data.UploadPlanning
 import com.tomcat927.miscuploader.ui.viewer.FileKind
 import com.tomcat927.miscuploader.ui.viewer.REMOTE_PREVIEW_LIMIT
 import com.tomcat927.miscuploader.ui.viewer.ViewerRequest
