@@ -52,6 +52,8 @@ class ConnectionManager @Inject constructor(
                 username = config.username,
                 password = config.password,
                 baseClient = okHttpClient,
+                // HTTP 层日志(方法/路径/状态码/耗时/长度;非 JSON 记脱敏片段)进诊断卡
+                debugLog = { msg -> logger.log("http", msg) },
             )
             client.login()
             logger.log("connect", "登录成功 ${config.baseUrl}")

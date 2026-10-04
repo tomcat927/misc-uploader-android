@@ -41,6 +41,8 @@ class OpenListClient(
     private val username: String,
     private val password: String,
     baseClient: OkHttpClient,
+    /** 诊断日志缝(2026-10-05):HTTP 层方法/路径/状态码/耗时/长度;连接管理器注入 AppLogger。null = 静默 */
+    private val debugLog: ((String) -> Unit)? = null,
 ) : RemoteStorage {
 
     private val baseUrl = normalizeBaseUrl(baseUrl)
@@ -222,23 +224,39 @@ class OpenListClient(
         return execute(req)
     }
 
-    private suspend fun execute(request: Request): String = try {
-        client.newCall(request).await().use { response ->
-            val text = response.body?.string().orEmpty()
-            // 防御 1:非 JSON(打错路由拿到 SPA index.html / 反代错误页)一律失败
-            if (!text.trimStart().startsWith("{")) {
-                throw OpenListApiException(
-                    response.code,
-                    "响应不是 JSON（HTTP ${response.code}），请检查地址是否指向 OpenList（形如 https://host:5245）",
+    private suspend fun execute(request: Request): String {
+        val started = System.currentTimeMillis()
+        return try {
+            client.newCall(request).await().use { response ->
+                val text = response.body?.string().orEmpty()
+                debugLog?.invoke(
+                    "${request.method} ${request.url.encodedPath} → HTTP ${response.code}，" +
+                        "${System.currentTimeMillis() - started}ms，${text.length} 字符",
                 )
+                // 防御 1:非 JSON(打错路由拿到 SPA index.html / 反代错误页)一律失败
+                if (!text.trimStart().startsWith("{")) {
+                    debugLog?.invoke("非 JSON 响应片段：${scrub(text.take(200))}")
+                    throw OpenListApiException(
+                        response.code,
+                        "响应不是 JSON（HTTP ${response.code}），请检查地址是否指向 OpenList（形如 https://host:5245）",
+                    )
+                }
+                text
             }
-            text
+        } catch (e: OpenListApiException) {
+            throw e
+        } catch (e: Exception) {
+            debugLog?.invoke("请求异常 ${request.method} ${request.url.encodedPath}：${e.javaClass.simpleName}：${e.message}")
+            throw OpenListNetworkException(e)
         }
-    } catch (e: OpenListApiException) {
-        throw e
-    } catch (e: Exception) {
-        throw OpenListNetworkException(e)
     }
+
+    /**
+     * 日志脱敏:响应体可能含 token(登录响应),原样入日志等于泄凭据——
+     * 片段日志一律先过此函数。请求体(含密码)永不入日志。
+     */
+    private fun scrub(s: String): String =
+        s.replace(Regex("\"token\"\\s*:\\s*\"[^\"]*\"", RegexOption.IGNORE_CASE), "\"token\":\"***\"")
 
     /** 只校验 code==200(目录/上传的 data 不关心) */
     private fun requireCode(body: String) {

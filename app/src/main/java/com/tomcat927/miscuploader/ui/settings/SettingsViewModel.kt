@@ -135,13 +135,17 @@ class SettingsViewModel @Inject constructor(
     /** 「连接」= 保存 + 连接一步(拍板:连接本身就是最好的测试) */
     fun connect() {
         val s = _uiState.value
+        // 点击即留痕(2026-10-05):此前校验短路不发日志,排查时"无任何日志"
+        logger.log("connect", "点击连接（地址=${s.url.trim()}）")
         viewModelScope.launch {
             val password = s.passwordInput.takeUnless { it.isEmpty() || it == SettingsRepository.PASSWORD_MASK }
             if (s.url.isBlank() || s.username.isBlank()) {
+                logger.log("connect", "连接未发起：服务器地址或用户名为空")
                 _uiState.update { it.copy(validationHint = "服务器地址与用户名不能为空") }
                 return@launch
             }
             if (password == null && !s.hasStoredPassword) {
+                logger.log("connect", "连接未发起：未输入密码且无已存密码")
                 _uiState.update { it.copy(validationHint = "请输入密码") }
                 return@launch
             }
@@ -153,6 +157,7 @@ class SettingsViewModel @Inject constructor(
             dirty = false
             val config = settings.loadDecryptedOnce()
             if (config == null) {
+                logger.log("connect", "连接未发起：配置不完整（缺少已保存密码）")
                 _uiState.update { it.copy(validationHint = "配置不完整（缺少已保存密码）") }
                 return@launch
             }
