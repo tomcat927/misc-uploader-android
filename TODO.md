@@ -1,8 +1,18 @@
 # TODO / 会话交接
 
-> 更新: 2026-10-04 · 供换会话/换机器后快速续接。
+> 更新: 2026-10-04(查看功能开发中断存档) · 供换会话/换机器后快速续接。
 > 阅读顺序: AGENTS.md(纪律与坑) → DESIGN.md(拍板表) → 本文件(现状与队列)。
 > 决策史: 私有仓 tianyi-misc-repo `docs/`(协议/架构拍板依据)。
+
+## ⚠️ 进行中(未提交!)——文件查看/打开功能,换会话先看这段
+
+**拍板已定**: 内置查看器 = 图片(全屏/缩放/同目录翻看) + 文本只读(编码识别/大文件分块);视频等委托系统 ACTION_VIEW;hex/ZIP/APK/编辑器不做;查看功能排在 A1 之前。
+
+**本地工作区有未提交改动**(C:\Users\Administrator\.zcode\workspace\default\misc-uploader-android):
+1. 已完成: 依赖(Coil 2.6.0 + juniversalchardet 2.4.0 进 version catalog 与 app/build.gradle.kts);file_paths.xml 加 root-path(本地文件 FileProvider)与 remote_preview 缓存;协议层 fileInfo/downloadTo(RemoteStorage 接口 + OpenListClient 实现,fs/get + raw_url + **fixRawUrl host 修正**(避坑指南的 raw_url 端口坑));`ui/viewer/FileViewer.kt` 全量 UI(ViewerRequest/FileKind 分类/ImagePager 缩放翻看/TextViewer 编码分块/DelegateViewer 委托 + openWithSystem)
+2. **FileViewer.kt 大概率编译不过**(一口气写的,已知缺 import: verticalScroll/rememberScrollState/SelectionContainer/TextButton/size/fillMaxWidth 里部分、mutableLongStateOf;Color 参数 Order 等;LaunchedEffect 内 setState 可能有 lint 问题)——续接时先 `git add -A && git commit && push` 让 CI 报错清单,按清单修到绿
+3. **未做**: HomeVM/HomeScreen 接线(文件单击→按 FileKind 路由到查看器:本地传 File,远程传 rawUrl/下载闭包,远程图片 Coil 直连 rawUrl、文本/其他先下载缓存 cache/remote_preview/);50MB 上限提示已有常量;DESIGN.md 拍板行待补;AGENTS.md 若有新坑补
+4. 参考语义: FileItem 在 ui/home/HomeModels.kt;远程路径拼法 joinRemotePath;ConnectionManager.clientOrNull() 取会话
 
 ## 当前状态(2026-10-04)
 
@@ -22,8 +32,8 @@
 
 ## 待办 — 开发队列(按推荐顺序)
 
-1. **A1 SHA-256 去重 + 上传历史**(下一项,已拍板方向): 上传前流式 hash(状态机 hashing 已预留)、Room 历史表(sha→最新落点)、同内容跳过并提示已有路径;语义对齐桌面端(内容级去重、上限一万条)
-2. **文件查看/打开**(2026-10-04 用户新需求): 本地文件 `ACTION_VIEW` + FileProvider(root-path 全盘)+ 扩展名 MIME;远程文件先经 `POST /api/fs/get` 拿 raw_url(或 WebDAV GET)下载到缓存再打开;内置图片大图/txt 查看器列为二期
+1. **A1 SHA-256 去重 + 上传历史**(查看功能之后): 上传前流式 hash(状态机 hashing 已预留)、Room 历史表(sha→最新落点)、同内容跳过并提示已有路径;语义对齐桌面端(内容级去重、上限一万条)
+2. **文件查看/打开**(进行中,详见顶部"进行中"段;拍板: 图片+文本只读内置,其余委托,先于 A1)
 3. **C 归档状态可见**: misc-sync.py 每轮写状态文件 + App 队列页卡片("已归档/待归档 N 项");需拍板状态文件位置(`/misc/.sync/` 或独立挂载)
 4. **D1 PiGallery2 深链**: 远程目录面包屑旁按钮 → 浏览器打开 PiGallery2 对应路径(约半天)
 5. **B misc-uploader 桌面端纯 REST 重构**: 依据 tianyi-misc-repo `docs/client-protocol-decision.md`;建议等实测把 REST 细节验证完再动

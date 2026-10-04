@@ -26,6 +26,16 @@ interface RemoteStorage {
      */
     suspend fun mkdirp(remotePath: String)
 
+    /** 文件元信息(fs/get):size 用于预览上限判断,rawUrl 用于图片直连/下载 */
+    suspend fun fileInfo(remotePath: String): RemoteFileInfo
+
+    /** 下载远程文件到本地目标(流式,经 raw_url 跟随重定向) */
+    suspend fun downloadTo(
+        remotePath: String,
+        target: File,
+        onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> },
+    )
+
     /**
      * 流式上传,内存恒定。
      * @param remotePath 目标完整路径(以 "/" 开头,含文件名)

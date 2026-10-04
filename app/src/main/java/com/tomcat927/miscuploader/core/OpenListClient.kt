@@ -3,8 +3,10 @@ package com.tomcat927.miscuploader.core
 import java.io.File
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -112,6 +114,55 @@ class OpenListClient(
             runCatching { mkdir(cur) } // 已存在等错误一律忽略(对齐 misc-sync.py)
         }
     }
+
+    override suspend fun fileInfo(remotePath: String): RemoteFileInfo {
+        val body = postJson(
+            "$baseUrl/api/fs/get",
+            json.encodeToString(FsGetRequest.serializer(), FsGetRequest(path = remotePath)),
+        )
+        val data = requireData(body) { json.decodeFromString<FsGetData>(it.toString()) }
+        if (data.isDir) throw OpenListApiException(400, "路径是文件夹，不是文件")
+        return RemoteFileInfo(name = data.name, size = data.size, rawUrl = fixRawUrl(data.rawUrl))
+    }
+
+    override suspend fun downloadTo(
+        remotePath: String,
+        target: File,
+        onProgress: (sent: Long, total: Long) -> Unit,
+    ) = withContext(Dispatchers.IO) {
+        val info = fileInfo(remotePath)
+        val request = Request.Builder().url(info.rawUrl).build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw OpenListApiException(response.code, "下载失败（HTTP ${response.code}）")
+            }
+            val total = response.body?.contentLength()?.takeIf { it > 0 } ?: info.size
+            var sent = 0L
+            response.body?.byteStream()?.use { input ->
+                target.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        output.write(buffer, 0, read)
+                        sent += read
+                        onProgress(sent, total)
+                    }
+                }
+            } ?: throw OpenListApiException(500, "响应无内容")
+        }
+    }
+
+    /**
+     * raw_url host 修正(避坑指南实测坑:有些部署返回的 raw_url 主机/端口与连接地址不同,
+     * 如 127.0.0.1:5244 直跑地址)——取其 path+query 拼到当前连接的 scheme+authority。
+     */
+    private fun fixRawUrl(raw: String): String = runCatching {
+        val u = java.net.URI(raw)
+        if (u.host == null) return raw
+        val base = java.net.URI(baseUrl)
+        java.net.URI(base.scheme, base.authority, u.path, u.query, null).toString()
+    }.getOrDefault(raw)
 
     override suspend fun upload(
         file: File,

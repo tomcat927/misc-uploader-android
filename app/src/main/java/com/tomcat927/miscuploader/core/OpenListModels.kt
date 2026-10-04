@@ -30,6 +30,17 @@ data class FsListData(
 )
 
 @Serializable
+data class FsGetRequest(val path: String)
+
+@Serializable
+data class FsGetData(
+    val name: String,
+    val size: Long = 0,
+    @SerialName("raw_url") val rawUrl: String = "",
+    @SerialName("is_dir") val isDir: Boolean = false,
+)
+
+@Serializable
 data class FsEntry(
     val name: String,
     val size: Long = 0,
@@ -39,6 +50,13 @@ data class FsEntry(
 
 /** 协议层异常:message 直接面向用户展示 */
 class OpenListApiException(val code: Int, message: String) : Exception(message)
+
+/** 远程文件元信息(fs/get) */
+data class RemoteFileInfo(
+    val name: String,
+    val size: Long,
+    val rawUrl: String,
+)
 
 class OpenListNetworkException(cause: Throwable) :
     Exception("网络错误：${cause.message ?: cause.javaClass.simpleName}", cause)

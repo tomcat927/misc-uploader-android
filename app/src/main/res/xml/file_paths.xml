@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="apk_updates" path="apk_updates/" />
+    <cache-path name="remote_preview" path="remote_preview/" />
+    <!-- 全盘访问(拍板:MANAGE_EXTERNAL_STORAGE 自用侧载):本地文件查看/系统委托打开 -->
+    <root-path name="root" path="." />
 </paths>
