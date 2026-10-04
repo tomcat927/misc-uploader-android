@@ -90,7 +90,8 @@ class UpdateService @Inject constructor(
                 checksumUrl = json.optString("apk_sha256"),
                 fallbackChecksumUrl = json.optString("github_apk_sha256"),
                 releaseUrl = json.optString("release_url"),
-                releaseNotes = json.optString("release_notes", null).takeIf { it.isNotBlank() },
+                // latest.json 无 release_notes 字段(单参 optString 默认 ""),null fallback + takeIf 会 NPE
+                releaseNotes = json.optString("release_notes").takeIf { it.isNotBlank() },
             )
         }
         return null
@@ -121,7 +122,7 @@ class UpdateService @Inject constructor(
             checksumUrl = "$PROXY_PREFIX$checksumUrl",
             fallbackChecksumUrl = checksumUrl,
             releaseUrl = json.optString("html_url"),
-            releaseNotes = json.optString("body", null).takeIf { it.isNotBlank() },
+            releaseNotes = json.optString("body").takeIf { it.isNotBlank() },
         )
     }
 
