@@ -60,14 +60,12 @@ class UpdateService @Inject constructor(
 
     suspend fun checkForUpdate(): UpdateInfo? = withContext(Dispatchers.IO) {
         val current = currentVersionCode()
-        val info = checkFromManifest() ?: checkFromGitHubApi()
-        if (info == null) {
-            Log.i(TAG, "未获取到更新信息")
-            null
-        } else {
-            Log.i(TAG, "current=$current latest=${info.versionCode}")
-            if (info.versionCode > current) info else null
-        }
+        // 双源都不可达 → 明确报错(而不是误报"已是最新");网络瞬断由 readText 内部重试兜底
+        val info = checkFromManifest()
+            ?: checkFromGitHubApi()
+            ?: throw IllegalStateException("无法连接更新源（gh-proxy 与 GitHub 均不可达，请检查网络或代理）")
+        Log.i(TAG, "current=$current latest=${info.versionCode}")
+        if (info.versionCode > current) info else null
     }
 
     private fun currentVersionCode(): Long {

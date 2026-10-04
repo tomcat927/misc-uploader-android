@@ -43,7 +43,8 @@ class UpdateViewModel @Inject constructor(
                 val info = updateService.checkForUpdate()
                 _state.value = if (info == null) UpdateState.NoUpdate else UpdateState.Available(info)
             } catch (e: Exception) {
-                _state.value = UpdateState.Error(e.message ?: "检查失败")
+                // 异常类名带上,空 message 的网络异常也能定位
+                _state.value = UpdateState.Error("检查失败：${e.javaClass.simpleName}${e.message?.takeIf { it.isNotBlank() }?.let { m -> "：$m" } ?: ""}")
             }
         }
     }
@@ -59,7 +60,7 @@ class UpdateViewModel @Inject constructor(
                 downloaded = file
                 _state.value = UpdateState.ReadyToInstall(file, info.tagName)
             } catch (e: Exception) {
-                _state.value = UpdateState.Error(e.message ?: "下载失败")
+                _state.value = UpdateState.Error("下载失败：${e.javaClass.simpleName}${e.message?.takeIf { it.isNotBlank() }?.let { m -> "：$m" } ?: ""}")
             }
         }
     }
