@@ -110,9 +110,14 @@ class UpdateViewModel @Inject constructor(
         }
     }
 
-    /** 「下载并安装」:关弹窗并开始下载(不记忆该版本) */
+    /** 弹窗内「下载并安装」:开始下载并保持弹窗转为进度显示 */
     fun confirmInstall() {
         confirmFromStartup = false
+        download()
+    }
+
+    /** 「后台下载」:仅收起进度弹窗,下载继续(完成仍自动拉安装器,设置卡同显进度) */
+    fun hideInstallProgress() {
         _showInstallConfirm.value = false
     }
 
@@ -140,10 +145,13 @@ class UpdateViewModel @Inject constructor(
                 }
                 downloaded = file
                 _state.value = UpdateState.ReadyToInstall(file, info.tagName)
-                // 一键到底(2026-10-04 拍板): 弹窗已确认过安装意图,下载完成自动拉起安装器;
+                // 一键到底(2026-10-04 拍板): 关进度弹窗并自动拉起安装器;
                 // 未授权「安装未知应用」时跳授权页,授权返回后由卡片「安装」键续接
+                _showInstallConfirm.value = false
                 install()
             } catch (e: Exception) {
+                // 下载失败关弹窗,错误信息在设置页卡片展示
+                _showInstallConfirm.value = false
                 _state.value = UpdateState.Error("下载失败：${e.javaClass.simpleName}${e.message?.takeIf { it.isNotBlank() }?.let { m -> "：$m" } ?: ""}")
             }
         }

@@ -6,8 +6,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -24,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tomcat927.miscuploader.ui.home.HomeScreen
 import com.tomcat927.miscuploader.ui.queue.QueueScreen
@@ -89,26 +95,46 @@ fun MainScreen() {
         }
     }
 
-    // 发现新版本确认框(主动检查/启动发现共用,任意 tab 可见):
-    // 确认即自动下载;「暂不」后卡片内按钮仍可用(启动来源会记住该版本不再弹)
+    // 发现新版本弹窗(主动检查/启动发现共用,任意 tab 可见):
+    // Available → 确认是否下载;确认后同弹窗转进度条(可「后台下载」收起),完成自动拉安装器
     if (showInstallConfirm) {
-        (updateState as? UpdateState.Available)?.let { s ->
-            AlertDialog(
+        when (val s = updateState) {
+            is UpdateState.Available -> AlertDialog(
                 onDismissRequest = updateViewModel::dismissInstallConfirm,
                 title = { Text("发现新版本") },
                 text = {
                     Text("最新版本 ${s.info.tagName}，是否下载安装？" + (s.info.releaseNotes?.let { "\n\n$it" } ?: ""))
                 },
                 confirmButton = {
-                    TextButton(onClick = {
-                        updateViewModel.confirmInstall()
-                        updateViewModel.download()
-                    }) { Text("下载并安装") }
+                    TextButton(onClick = updateViewModel::confirmInstall) { Text("下载并安装") }
                 },
                 dismissButton = {
                     TextButton(onClick = updateViewModel::dismissInstallConfirm) { Text("暂不") }
                 },
             )
+
+            is UpdateState.Downloading -> AlertDialog(
+                onDismissRequest = updateViewModel::hideInstallProgress,
+                title = { Text("正在下载更新") },
+                text = {
+                    Column {
+                        LinearProgressIndicator(
+                            progress = { s.progress },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "已完成 ${(s.progress * 100).toInt()}%，完成后自动弹出安装",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = updateViewModel::hideInstallProgress) { Text("后台下载") }
+                },
+            )
+
+            else -> Unit
         }
     }
 }
