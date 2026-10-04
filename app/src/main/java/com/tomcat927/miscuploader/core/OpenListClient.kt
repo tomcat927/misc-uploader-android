@@ -233,9 +233,12 @@ class OpenListClient(
                     "${request.method} ${request.url.encodedPath} → HTTP ${response.code}，" +
                         "${System.currentTimeMillis() - started}ms，${text.length} 字符",
                 )
+                // 响应体入日志(用户拍板 2026-10-05):token 一律脱敏;大响应截断记片段
+                debugLog?.invoke(
+                    "响应体：${scrub(if (text.length <= 1024) text else text.take(300) + "…(截断)")}",
+                )
                 // 防御 1:非 JSON(打错路由拿到 SPA index.html / 反代错误页)一律失败
                 if (!text.trimStart().startsWith("{")) {
-                    debugLog?.invoke("非 JSON 响应片段：${scrub(text.take(200))}")
                     throw OpenListApiException(
                         response.code,
                         "响应不是 JSON（HTTP ${response.code}），请检查地址是否指向 OpenList（形如 https://host:5245）",
