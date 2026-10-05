@@ -533,6 +533,14 @@ class HomeViewModel @Inject constructor(
     private val _searchSelection = MutableStateFlow<Set<String>>(emptySet())
     val searchSelection: StateFlow<Set<String>> = _searchSelection.asStateFlow()
 
+    /** 全局搜索历史(拍板 2026-10-06,MT 同款:发起搜索即记,最近在前去重上限 20) */
+    val searchHistory: StateFlow<List<String>> = settings.searchHistoryFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun clearSearchHistory() {
+        viewModelScope.launch { settings.clearSearchHistory() }
+    }
+
     private var searchJob: Job? = null
 
     /** 打开搜索面板:范围 = 打开时左栏所在目录(root 桥目录同样支持) */
@@ -564,6 +572,7 @@ class HomeViewModel @Inject constructor(
         searchJob?.cancel()
         _searchSelection.value = emptySet()
         _search.update { it?.copy(phase = LocalSearchState.Phase.RUNNING, scanned = 0, results = emptyList()) }
+        settings.addSearchHistory(s.query.trim())
         searchJob = viewModelScope.launch {
             val hits = try {
                 if (s.viaRoot) searchViaRoot(s) else searchViaWalk(s)

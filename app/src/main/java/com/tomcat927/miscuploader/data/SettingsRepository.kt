@@ -62,6 +62,7 @@ class SettingsRepository @Inject constructor(
         val UPLOAD_MODE = stringPreferencesKey("upload_mode")
         val STARTUP_UPDATE_CHECK = booleanPreferencesKey("startup_update_check")
         val UPDATE_SOURCE = stringPreferencesKey("update_source")
+        val SEARCH_HISTORY = stringPreferencesKey("search_history")
         val UPDATE_DISMISSED_TAG = stringPreferencesKey("update_dismissed_tag")
         val TOUCH_FOCUS = booleanPreferencesKey("touch_focus")
         val SHOW_HIDDEN = booleanPreferencesKey("show_hidden")
@@ -116,6 +117,30 @@ class SettingsRepository @Inject constructor(
     suspend fun saveUpdateSource(pref: UpdateSourcePreference) {
         context.dataStore.edit { prefs ->
             prefs[Keys.UPDATE_SOURCE] = pref.key
+        }
+    }
+
+    /**
+     * 全局搜索历史(拍板 2026-10-06,MT 同款裁剪:最近在前、去重、上限 20 条;
+     * MT 原版每次输入都记导致大量前缀重复,这里按词去重置顶)。
+     * 关键词来自单行输入框,不含换行,\n 拼接存储安全。
+     */
+    val searchHistoryFlow: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        prefs[Keys.SEARCH_HISTORY].orEmpty().split('\n').filter { it.isNotBlank() }
+    }
+
+    suspend fun addSearchHistory(term: String) {
+        val t = term.trim()
+        if (t.isEmpty()) return
+        context.dataStore.edit { prefs ->
+            val existing = prefs[Keys.SEARCH_HISTORY].orEmpty().split('\n').filter { it.isNotBlank() }
+            prefs[Keys.SEARCH_HISTORY] = (listOf(t) + existing.filter { it != t }).take(20).joinToString("\n")
+        }
+    }
+
+    suspend fun clearSearchHistory() {
+        context.dataStore.edit { prefs ->
+            prefs.remove(Keys.SEARCH_HISTORY)
         }
     }
 

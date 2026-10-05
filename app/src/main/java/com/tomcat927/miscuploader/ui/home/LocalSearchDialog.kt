@@ -10,15 +10,19 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -27,6 +31,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +54,7 @@ import java.util.Locale
 fun LocalSearchDialog(
     state: LocalSearchState,
     selection: Set<String>,
+    history: List<String>,
     onQuery: (String) -> Unit,
     onRecursive: (Boolean) -> Unit,
     onCategory: (FileCategory) -> Unit,
@@ -56,8 +65,10 @@ fun LocalSearchDialog(
     onSelectAll: () -> Unit,
     onLocate: (SearchHit) -> Unit,
     onUpload: (all: Boolean) -> Unit,
+    onClearHistory: () -> Unit,
     onClose: () -> Unit,
 ) {
+    var showHistory by remember { mutableStateOf(false) }
     Dialog(onDismissRequest = onClose) {
         Surface(
             shape = RoundedCornerShape(16.dp),
@@ -65,10 +76,13 @@ fun LocalSearchDialog(
             modifier = Modifier.fillMaxWidth().heightIn(max = 600.dp),
         ) {
             Column(Modifier.padding(16.dp)) {
-                // 标题行:标题 + 范围 + 关闭
+                // 标题行:标题 + 范围 + (输入阶段)历史入口 + 关闭
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("搜索文件", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            if (showHistory) "历史记录" else "搜索文件",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
                         Text(
                             state.scopeDir + if (state.viaRoot) "（root）" else "",
                             style = MaterialTheme.typography.labelSmall,
@@ -77,13 +91,39 @@ fun LocalSearchDialog(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    if (state.phase == Phase.INPUT) {
+                        FilledTonalIconButton(
+                            onClick = { showHistory = !showHistory },
+                            modifier = Modifier.size(30.dp),
+                        ) {
+                            Icon(
+                                Icons.Filled.History,
+                                contentDescription = "搜索历史",
+                                modifier = Modifier.size(17.dp),
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                    }
                     TextButton(onClick = onClose) { Text("关闭") }
                 }
 
                 when (state.phase) {
-                    Phase.INPUT -> SearchInputPanel(
-                        state, onQuery, onRecursive, onCategory, onTime, onRun, onClose,
-                    )
+                    Phase.INPUT ->
+                        if (showHistory) {
+                            SearchHistoryPanel(
+                                history = history,
+                                onPick = { term ->
+                                    onQuery(term)
+                                    showHistory = false
+                                },
+                                onClear = onClearHistory,
+                                onBack = { showHistory = false },
+                            )
+                        } else {
+                            SearchInputPanel(
+                                state, onQuery, onRecursive, onCategory, onTime, onRun, onClose,
+                            )
+                        }
 
                     Phase.RUNNING -> SearchRunningPanel(state, onStop)
 
@@ -93,6 +133,44 @@ fun LocalSearchDialog(
                 }
             }
         }
+    }
+}
+
+/** 搜索历史(MT 同款):点条目回填关键词(不自动开搜),底部清空/返回 */
+@Composable
+private fun SearchHistoryPanel(
+    history: List<String>,
+    onPick: (String) -> Unit,
+    onClear: () -> Unit,
+    onBack: () -> Unit,
+) {
+    if (history.isEmpty()) {
+        Text(
+            "暂无历史记录",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+        )
+    } else {
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
+            items(history, key = { it }) { term ->
+                Text(
+                    term,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onPick(term) }
+                        .padding(horizontal = 4.dp, vertical = 10.dp),
+                )
+            }
+        }
+    }
+    Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = onClear, enabled = history.isNotEmpty()) { Text("清空") }
+        Spacer(Modifier.weight(1f))
+        TextButton(onClick = onBack) { Text("返回") }
     }
 }
 

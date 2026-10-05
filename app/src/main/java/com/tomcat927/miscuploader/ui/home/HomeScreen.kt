@@ -107,6 +107,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val rightQuery by viewModel.rightQuery.collectAsState()
     val search by viewModel.search.collectAsState()
     val searchSelection by viewModel.searchSelection.collectAsState()
+    val searchHistory by viewModel.searchHistory.collectAsState()
     val viewerRequest by viewModel.viewerRequest.collectAsState()
     val context = LocalContext.current
     val galleryUrl = GalleryLink.forDir(pigalleryBase, right.path)
@@ -310,6 +311,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
         LocalSearchDialog(
             state = s,
             selection = searchSelection,
+            history = searchHistory,
             onQuery = viewModel::updateSearchQuery,
             onRecursive = viewModel::setSearchRecursive,
             onCategory = viewModel::setSearchCategory,
@@ -320,6 +322,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             onSelectAll = viewModel::selectAllSearchResults,
             onLocate = viewModel::locateResult,
             onUpload = viewModel::uploadSearchResults,
+            onClearHistory = viewModel::clearSearchHistory,
             onClose = viewModel::closeSearch,
         )
     }
