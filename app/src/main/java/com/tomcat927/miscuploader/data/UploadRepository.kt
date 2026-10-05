@@ -161,7 +161,7 @@ class UploadRepository @Inject constructor(
         val items = entries.mapNotNull { entry ->
             runCatching {
                 val dest = File(cacheDir, "${System.nanoTime()}_${entry.name.replace(Regex("[/\\\\]"), "_")}")
-                rootShell.readToFile(entry.path, dest)
+                rootShell.readToFile(entry.path, entry.size, dest)
                 if (!dest.isFile || dest.length() == 0L) {
                     dest.delete()
                     return@mapNotNull null

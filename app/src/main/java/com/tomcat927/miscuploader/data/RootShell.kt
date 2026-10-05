@@ -1,6 +1,7 @@
 package com.tomcat927.miscuploader.data
 
-import com.topjohnwu.libsu.Shell
+import com.topjohnwu.superuser.Shell
+import com.topjohnwu.superuser.io.SuFileInputStream
 import java.io.File
 import java.io.IOException
 import javax.inject.Inject
@@ -64,17 +65,26 @@ class RootShell @Inject constructor(private val logger: AppLogger) {
         result.out.mapNotNull { LsParser.parseStatLine(it) }
     }
 
-    /** cat 流式拷贝到本地缓存文件;返回写入字节数 */
-    suspend fun readToFile(path: String, dest: File): Long = withContext(Dispatchers.IO) {
+    /**
+     * root 流式读取文件到本地缓存(SuFileInputStream,io 模块——core 的 Job API 无 stdout 转 OutputStream)。
+     * expectedSize 来自列目录结果,不符视为读取不完整并删除残件。
+     */
+    suspend fun readToFile(path: String, expectedSize: Long, dest: File): Long = withContext(Dispatchers.IO) {
         dest.parentFile?.mkdirs()
-        dest.outputStream().use { out ->
-            val result = Shell.cmd("cat ${quote(path)}").to(out).exec()
-            if (!result.isSuccess) {
-                dest.delete()
-                throw IOException(result.err.firstOrNull() ?: "cat 退出码 ${result.code}")
+        try {
+            dest.outputStream().use { out ->
+                SuFileInputStream.open(path).use { input -> input.copyTo(out) }
             }
+        } catch (e: IOException) {
+            dest.delete()
+            throw IOException("读取失败：${e.message ?: e.javaClass.simpleName}")
         }
-        dest.length()
+        val actual = dest.length()
+        if (actual != expectedSize) {
+            dest.delete()
+            throw IOException("读取不完整（期望 $expectedSize B，实际 $actual B）")
+        }
+        actual
     }
 
     /** 单引号包裹,内部单引号按 POSIX 规则转义(路径来自列目录结果,可能有任意字符) */
