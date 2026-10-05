@@ -17,6 +17,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // libsu(root 桥,拍板 2026-10-05)只在 JitPack 发布
+        maven { url = uri("https://jitpack.io") }
     }
 }
 

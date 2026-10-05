@@ -76,7 +76,7 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.coil.compose)
     implementation(libs.juniversalchardet)
-    // root 桥(拍板 2026-10-05):libsu 常驻 su 会话,访问 Android/data 等受限目录
+    // root 桥(拍板 2026-10-05):libsu 常驻 su 会话,访问 Android/data 等受限目录(JitPack 发布,core 模块)
     implementation(libs.libsu)
     debugImplementation(libs.androidx.compose.ui.tooling)
 

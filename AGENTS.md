@@ -32,6 +32,7 @@ misc-uploader-android：杂物数字仓库（tianyi-misc-repo，私有仓）的 
 3. **Compose Lazy 列表的 `items` 重载解析**：`androidx.compose.foundation.lazy.items`（List 重载）必须显式导入，否则只匹配成员 `items(count: Int)`，报 "List but Int expected"；且内容 lambda 的参数不要命名为 `items`（值遮蔽函数名后仍按 count 重载解析）。（2026-10-03）
 4. **Android 必须声明 `INTERNET` 权限**：漏了会报 `socket failed: EPERM (Operation not permitted)`——这是权限缺失的标志错误，不是服务器问题（CI/单测测不到 Manifest，只有真机联网才暴露）。首次真机实测即踩中。另注意：Android 默认禁 cleartext，用户输 `http://` 会报 "Cleartext HTTP traffic not permitted"（与 EPERM 区分）。（2026-10-03）
 5. **Android 常量名不要凭训练数据硬写**：ACTION_MANAGE_APP_INSTALL_SOURCES 不存在（真实为 ACTION_MANAGE_UNKNOWN_APP_SOURCES + package URI data，API 26+）；不确定的常量/字段名先查 AOSP 源码或官方文档，否则 CI 才暴露。（2026-10-04）
+6. **依赖坐标/发布仓不要凭记忆硬写**：libsu 的坐标是 `com.github.topjohnwu.libsu:core`（3.x 起拆模块 core/io/service/nio）且**只在 JitPack 发布**——写成 `com.github.topjohnwu:libsu` + mavenCentral 会报 `Could not find`；settings.gradle.kts 需加 jitpack.io 仓。引新依赖前先到 repo1.maven.org / mvnrepository.com 核实坐标与发布仓。（2026-10-05）
 
 ## 凭据与安全规约（不可妥协）
 
