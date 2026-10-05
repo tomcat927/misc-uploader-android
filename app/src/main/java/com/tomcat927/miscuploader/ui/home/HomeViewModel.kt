@@ -572,7 +572,7 @@ class HomeViewModel @Inject constructor(
         searchJob?.cancel()
         _searchSelection.value = emptySet()
         _search.update { it?.copy(phase = LocalSearchState.Phase.RUNNING, scanned = 0, results = emptyList()) }
-        settings.addSearchHistory(s.query.trim())
+        viewModelScope.launch { settings.addSearchHistory(s.query.trim()) } // 记录与搜索分离,取消搜索不影响记账
         searchJob = viewModelScope.launch {
             val hits = try {
                 if (s.viaRoot) searchViaRoot(s) else searchViaWalk(s)
