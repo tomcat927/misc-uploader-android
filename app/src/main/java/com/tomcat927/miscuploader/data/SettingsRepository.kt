@@ -24,6 +24,13 @@ enum class UploadMode(val label: String) {
     AUTO_DATE("按日期自动"),
 }
 
+/** 更新源偏好(拍板 2026-10-06:gh-proxy 是第三方公共镜像,不信任时可仅直连;默认自动三源链) */
+enum class UpdateSourcePreference(val key: String, val label: String) {
+    AUTO("auto", "自动·镜像优先"),
+    GITHUB("github", "仅直连"),
+    GHPROXY("ghproxy", "仅镜像"),
+}
+
 /** 已保存的连接配置(密码密文态) */
 data class StoredConfig(
     val baseUrl: String,
@@ -54,6 +61,7 @@ class SettingsRepository @Inject constructor(
         val PASSWORD_CIPHER = stringPreferencesKey("password_cipher")
         val UPLOAD_MODE = stringPreferencesKey("upload_mode")
         val STARTUP_UPDATE_CHECK = booleanPreferencesKey("startup_update_check")
+        val UPDATE_SOURCE = stringPreferencesKey("update_source")
         val UPDATE_DISMISSED_TAG = stringPreferencesKey("update_dismissed_tag")
         val TOUCH_FOCUS = booleanPreferencesKey("touch_focus")
         val SHOW_HIDDEN = booleanPreferencesKey("show_hidden")
@@ -91,6 +99,23 @@ class SettingsRepository @Inject constructor(
     suspend fun saveStartupUpdateCheck(enabled: Boolean) {
         context.dataStore.edit { prefs ->
             prefs[Keys.STARTUP_UPDATE_CHECK] = enabled
+        }
+    }
+
+    /** 更新源偏好(拍板 2026-10-06:默认自动三源链;仅直连 = 不经第三方镜像,完整性最优) */
+    val updateSourceFlow: Flow<UpdateSourcePreference> = context.dataStore.data.map { prefs ->
+        when (prefs[Keys.UPDATE_SOURCE]) {
+            "github" -> UpdateSourcePreference.GITHUB
+            "ghproxy" -> UpdateSourcePreference.GHPROXY
+            else -> UpdateSourcePreference.AUTO
+        }
+    }
+
+    suspend fun loadUpdateSourceOnce(): UpdateSourcePreference = updateSourceFlow.first()
+
+    suspend fun saveUpdateSource(pref: UpdateSourcePreference) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.UPDATE_SOURCE] = pref.key
         }
     }
 

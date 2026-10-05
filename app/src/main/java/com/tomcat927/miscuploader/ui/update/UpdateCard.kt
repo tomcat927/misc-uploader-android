@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -25,12 +26,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tomcat927.miscuploader.BuildConfig
+import com.tomcat927.miscuploader.data.UpdateSourcePreference
 
 /** 应用内热更新(拍板 2026-10-04):检查 → 下载(进度) → SHA-256 校验 → 拉起系统安装器 */
 @Composable
 fun UpdateCard(viewModel: UpdateViewModel = viewModel()) {
     val state by viewModel.state.collectAsState()
     val startupCheck by viewModel.startupCheckEnabled.collectAsState()
+    val sourcePref by viewModel.sourcePreference.collectAsState()
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -107,7 +110,7 @@ fun UpdateCard(viewModel: UpdateViewModel = viewModel()) {
                 )
 
                 UpdateState.Idle -> Text(
-                    "检查并安装新版本（经 gh-proxy 加速，SHA-256 校验）",
+                    "检查并安装新版本（多源检查，SHA-256 校验）",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -130,6 +133,26 @@ fun UpdateCard(viewModel: UpdateViewModel = viewModel()) {
                     checked = startupCheck,
                     onCheckedChange = viewModel::setStartupCheckEnabled,
                 )
+            }
+
+            // 更新源偏好(拍板 2026-10-06:gh-proxy 为第三方镜像,不信任可选仅直连;下次检查即生效)
+            Column(Modifier.fillMaxWidth()) {
+                Text("更新源", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "gh-proxy 为第三方公共镜像；不信任镜像或镜像不可用时可选「仅直连」",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(Modifier.padding(top = 4.dp)) {
+                    UpdateSourcePreference.entries.forEach { pref ->
+                        FilterChip(
+                            selected = sourcePref == pref,
+                            onClick = { viewModel.setSourcePreference(pref) },
+                            label = { Text(pref.label, style = MaterialTheme.typography.labelSmall) },
+                            modifier = Modifier.padding(end = 4.dp),
+                        )
+                    }
+                }
             }
         }
     }

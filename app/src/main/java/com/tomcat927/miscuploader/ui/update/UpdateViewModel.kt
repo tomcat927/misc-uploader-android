@@ -7,6 +7,7 @@ import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tomcat927.miscuploader.data.SettingsRepository
+import com.tomcat927.miscuploader.data.UpdateSourcePreference
 import com.tomcat927.miscuploader.update.UpdateCheckManager
 import com.tomcat927.miscuploader.update.UpdateService
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -64,6 +65,10 @@ class UpdateViewModel @Inject constructor(
     val startupCheckEnabled: StateFlow<Boolean> = settings.startupUpdateCheckFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
 
+    /** 更新源偏好(拍板 2026-10-06:自动三源链/仅直连/仅镜像;下次检查即生效) */
+    val sourcePreference: StateFlow<UpdateSourcePreference> = settings.updateSourceFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UpdateSourcePreference.AUTO)
+
     init {
         viewModelScope.launch { dismissedTag = settings.updateDismissedTagOnce() }
         // 启动静默检查的结果回填:卡片无需手动点检查即显示「发现新版本」;
@@ -91,6 +96,10 @@ class UpdateViewModel @Inject constructor(
 
     fun setStartupCheckEnabled(enabled: Boolean) {
         viewModelScope.launch { settings.saveStartupUpdateCheck(enabled) }
+    }
+
+    fun setSourcePreference(pref: UpdateSourcePreference) {
+        viewModelScope.launch { settings.saveUpdateSource(pref) }
     }
 
     fun check() {

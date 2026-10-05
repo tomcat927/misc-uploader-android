@@ -19,14 +19,16 @@ import org.json.JSONObject
 
 /**
  * 应用内热更新(拍板 2026-10-04,移植 ncm-cloud-player 同款实现):
- * latest.json 双源检查(gh-proxy 优先 → GitHub 直连回退) → 版本比较 → APK 下载(进度回调)
+ * latest.json 检查(源链按「更新源偏好」裁剪) → 版本比较 → APK 下载(进度回调)
  * → SHA-256 校验 → FileProvider 安装 Intent。
  * latest.json 由 release.yml 发布(含 version_code/apk/github_apk/sha256)。
+ * 更新源偏好(拍板 2026-10-06):gh-proxy 为第三方镜像,用户可切「仅直连」保证完整性。
  */
 @Singleton
 class UpdateService @Inject constructor(
     @ApplicationContext private val context: Context,
     private val logger: com.tomcat927.miscuploader.data.AppLogger,
+    private val settings: com.tomcat927.miscuploader.data.SettingsRepository,
 ) {
 
     companion object {
@@ -34,6 +36,35 @@ class UpdateService @Inject constructor(
         private const val OWNER = "tomcat927"
         private const val REPO = "misc-uploader-android"
         private const val PROXY_PREFIX = "https://gh-proxy.com/"
+        private const val GH_MANIFEST =
+            "https://github.com/$OWNER/$REPO/releases/latest/download/latest.json"
+        private const val API_URL = "https://api.github.com/repos/$OWNER/$REPO/releases/latest"
+
+        /** 清单源链:AUTO=镜像→直连;GITHUB=仅直连;GHPROXY=仅镜像 */
+        fun manifestChainFor(pref: com.tomcat927.miscuploader.data.UpdateSourcePreference): List<String> =
+            when (pref) {
+                com.tomcat927.miscuploader.data.UpdateSourcePreference.AUTO ->
+                    listOf("$PROXY_PREFIX$GH_MANIFEST", GH_MANIFEST)
+
+                com.tomcat927.miscuploader.data.UpdateSourcePreference.GITHUB -> listOf(GH_MANIFEST)
+                com.tomcat927.miscuploader.data.UpdateSourcePreference.GHPROXY ->
+                    listOf("$PROXY_PREFIX$GH_MANIFEST")
+            }
+
+        /** (首选, 回退)URL 对:偏好约束镜像的使用范围 */
+        fun downloadPairFor(
+            pref: com.tomcat927.miscuploader.data.UpdateSourcePreference,
+            mirrored: String,
+            direct: String,
+        ): Pair<String, String> = when (pref) {
+            com.tomcat927.miscuploader.data.UpdateSourcePreference.AUTO -> mirrored to direct
+            com.tomcat927.miscuploader.data.UpdateSourcePreference.GITHUB -> direct to direct
+            com.tomcat927.miscuploader.data.UpdateSourcePreference.GHPROXY -> mirrored to mirrored
+        }
+
+        /** GitHub API 兜底属直连源:仅镜像偏好下不使用 */
+        fun apiFallbackFor(pref: com.tomcat927.miscuploader.data.UpdateSourcePreference): Boolean =
+            pref != com.tomcat927.miscuploader.data.UpdateSourcePreference.GHPROXY
     }
 
     data class UpdateInfo(
@@ -52,22 +83,26 @@ class UpdateService @Inject constructor(
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    private val manifestUrls = listOf(
-        "${PROXY_PREFIX}https://github.com/$OWNER/$REPO/releases/latest/download/latest.json",
-        "https://github.com/$OWNER/$REPO/releases/latest/download/latest.json",
-    )
-
-    private val apiUrl = "https://api.github.com/repos/$OWNER/$REPO/releases/latest"
-
     suspend fun checkForUpdate(): UpdateInfo? = withContext(Dispatchers.IO) {
         val current = currentVersionCode()
-        logger.log("update", "检查更新：当前 versionCode=$current")
-        // 双源都不可达 → 明确报错(而不是误报"已是最新");网络瞬断由 readText 内部重试兜底
-        val info = checkFromManifest()
-            ?: checkFromGitHubApi()
+        val pref = settings.loadUpdateSourceOnce()
+        logger.log("update", "检查更新：当前 versionCode=$current，更新源=${pref.label}")
+        val info = checkFromManifest(pref)
+            ?: (if (apiFallbackFor(pref)) checkFromGitHubApi(pref) else null)
             ?: run {
-                logger.log("update", "双源均不可达（gh-proxy / GitHub 清单 / GitHub API）")
-                throw IllegalStateException("无法连接更新源（gh-proxy 与 GitHub 均不可达，请检查网络或代理）")
+                logger.log("update", "更新源均不可达（偏好=${pref.label}）")
+                throw IllegalStateException(
+                    when (pref) {
+                        com.tomcat927.miscuploader.data.UpdateSourcePreference.AUTO ->
+                            "无法连接更新源（镜像与 GitHub 直连均不可达，请检查网络或代理）"
+
+                        com.tomcat927.miscuploader.data.UpdateSourcePreference.GITHUB ->
+                            "无法连接 GitHub（仅直连模式，请检查网络或代理）"
+
+                        com.tomcat927.miscuploader.data.UpdateSourcePreference.GHPROXY ->
+                            "无法连接 gh-proxy 镜像（仅镜像模式，请检查网络或切回自动）"
+                    },
+                )
             }
         Log.i(TAG, "current=$current latest=${info.versionCode}")
         logger.log(
@@ -84,8 +119,8 @@ class UpdateService @Inject constructor(
         else @Suppress("DEPRECATION") info.versionCode.toLong()
     }
 
-    private suspend fun checkFromManifest(): UpdateInfo? {
-        for (url in manifestUrls) {
+    private suspend fun checkFromManifest(pref: com.tomcat927.miscuploader.data.UpdateSourcePreference): UpdateInfo? {
+        for (url in manifestChainFor(pref)) {
             val body = readText(url)
             if (body == null) {
                 logger.log("update", "清单源不可达：$url")
@@ -104,13 +139,16 @@ class UpdateService @Inject constructor(
                 continue
             }
             logger.log("update", "清单源命中 versionCode=$versionCode：$url")
+            val (dl, dlFallback) = downloadPairFor(pref, apk, githubApk)
+            val (checksum, checksumFallback) =
+                downloadPairFor(pref, json.optString("apk_sha256"), json.optString("github_apk_sha256"))
             return UpdateInfo(
                 tagName = json.optString("tag_name"),
                 versionCode = versionCode,
-                downloadUrl = apk,
-                fallbackDownloadUrl = githubApk,
-                checksumUrl = json.optString("apk_sha256"),
-                fallbackChecksumUrl = json.optString("github_apk_sha256"),
+                downloadUrl = dl,
+                fallbackDownloadUrl = dlFallback,
+                checksumUrl = checksum,
+                fallbackChecksumUrl = checksumFallback,
                 releaseUrl = json.optString("release_url"),
                 // latest.json 无 release_notes 字段(单参 optString 默认 ""),null fallback + takeIf 会 NPE
                 releaseNotes = json.optString("release_notes").takeIf { it.isNotBlank() },
@@ -119,10 +157,10 @@ class UpdateService @Inject constructor(
         return null
     }
 
-    private suspend fun checkFromGitHubApi(): UpdateInfo? {
-        val body = readText(apiUrl, mapOf("Accept" to "application/vnd.github+json", "User-Agent" to REPO))
+    private suspend fun checkFromGitHubApi(pref: com.tomcat927.miscuploader.data.UpdateSourcePreference): UpdateInfo? {
+        val body = readText(API_URL, mapOf("Accept" to "application/vnd.github+json", "User-Agent" to REPO))
         if (body == null) {
-            logger.log("update", "GitHub API 不可达：$apiUrl")
+            logger.log("update", "GitHub API 不可达：$API_URL")
             return null
         }
         val json = runCatching { JSONObject(body) }.getOrNull()
@@ -155,13 +193,15 @@ class UpdateService @Inject constructor(
             return null
         }
         logger.log("update", "GitHub API 命中 versionCode=$versionCode")
+        val (dl, dlFallback) = downloadPairFor(pref, "$PROXY_PREFIX$apkUrl", apkUrl)
+        val (checksum, checksumFallback) = downloadPairFor(pref, "$PROXY_PREFIX$checksumUrl", checksumUrl)
         return UpdateInfo(
             tagName = tagName,
             versionCode = versionCode,
-            downloadUrl = "$PROXY_PREFIX$apkUrl",
-            fallbackDownloadUrl = apkUrl,
-            checksumUrl = "$PROXY_PREFIX$checksumUrl",
-            fallbackChecksumUrl = checksumUrl,
+            downloadUrl = dl,
+            fallbackDownloadUrl = dlFallback,
+            checksumUrl = checksum,
+            fallbackChecksumUrl = checksumFallback,
             releaseUrl = json.optString("html_url"),
             releaseNotes = json.optString("body").takeIf { it.isNotBlank() },
         )
