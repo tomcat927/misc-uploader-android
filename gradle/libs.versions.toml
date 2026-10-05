@@ -13,6 +13,7 @@ datastore = "1.1.1"
 room = "2.6.1"
 coil = "2.6.0"
 juniversalchardet = "2.4.0"
+libsu = "5.2.2"
 junit = "4.13.2"
 coroutinesTest = "1.9.0"
 
@@ -28,6 +29,7 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 juniversalchardet = { group = "com.github.albfernandez", name = "juniversalchardet", version.ref = "juniversalchardet" }
+libsu = { group = "com.github.topjohnwu", name = "libsu", version.ref = "libsu" }
 androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }

@@ -9,6 +9,7 @@ data class FileItem(
     val isDir: Boolean,
     val size: Long,
     val modifiedText: String,
+    val mtimeMs: Long? = null,
 )
 
 /** 单侧浏览器状态 */
@@ -17,4 +18,6 @@ data class BrowserState(
     val entries: List<FileItem> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
+    /** 左栏当前目录经 root 桥列出(拍板 2026-10-05);右栏恒 false */
+    val viaRoot: Boolean = false,
 )

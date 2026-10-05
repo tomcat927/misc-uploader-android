@@ -34,6 +34,7 @@ class UploadRepository @Inject constructor(
     private val appScope: CoroutineScope,
     private val logger: AppLogger,
     private val settings: SettingsRepository,
+    private val rootShell: RootShell,
 ) {
 
     val items: Flow<List<UploadItemEntity>> = dao.observeAll()
@@ -144,10 +145,60 @@ class UploadRepository @Inject constructor(
         ShareEnqueue(items.size, target)
     }
 
+    /**
+     * root 桥入队(拍板 2026-10-05):受限目录(Android/data 等)的所选项经 su 读取——
+     * 每个文件 cat 拷缓存后与分享路径同构入队;单文件失败只跳过并记日志,不中断整批。
+     * @return 实际入队文件数
+     */
+    suspend fun enqueueFromRoot(
+        baseDir: String,
+        entries: List<RootEntry>,
+        mode: UploadMode,
+        manualTarget: String,
+    ): Int = withContext(Dispatchers.IO) {
+        val cacheDir = File(context.cacheDir, "root").apply { mkdirs() }
+        val now = System.currentTimeMillis()
+        val items = entries.mapNotNull { entry ->
+            runCatching {
+                val dest = File(cacheDir, "${System.nanoTime()}_${entry.name.replace(Regex("[/\\\\]"), "_")}")
+                rootShell.readToFile(entry.path, dest)
+                if (!dest.isFile || dest.length() == 0L) {
+                    dest.delete()
+                    return@mapNotNull null
+                }
+                val dir = if (mode == UploadMode.AUTO_DATE) {
+                    UploadPlanning.autoDirFor(entry.mtimeMs)
+                } else {
+                    UploadPlanning.normalizeDir(manualTarget)
+                }
+                val rel = entry.path.removePrefix(baseDir).trimStart('/')
+                logger.log("root", "root 读取：${entry.path}（${dest.length()} B）")
+                UploadItemEntity(
+                    localPath = dest.absolutePath,
+                    displayName = entry.name,
+                    size = dest.length(),
+                    remoteDir = dir,
+                    remotePath = UploadPlanning.joinRemotePath(dir, rel),
+                    state = UploadState.PENDING,
+                    progress = 0,
+                    enqueuedAt = now,
+                )
+            }.onFailure {
+                logger.log("root", "读取失败：${entry.path}（${it.message}）")
+            }.getOrNull()
+        }
+        if (items.isNotEmpty()) {
+            dao.insertAll(items)
+            logger.log("queue", "root 入队 ${items.size} 项")
+            startService()
+        }
+        items.size
+    }
+
     /** 应用启动/连接成功时恢复:清理孤儿缓存;有在途任务则拉起服务(服务启动重置中断状态) */
     fun resumeIfPending() {
         appScope.launch {
-            cleanupOrphanShareCache()
+            cleanupOrphanCache()
             if (dao.activeCount() > 0) {
                 logger.log("queue", "恢复队列：${dao.activeCount()} 项在途")
                 startService()
@@ -239,11 +290,13 @@ class UploadRepository @Inject constructor(
         return uri.lastPathSegment ?: "未命名"
     }
 
-    /** 删除不在在途队列中的分享缓存文件(启动时调用) */
-    private suspend fun cleanupOrphanShareCache() = withContext(Dispatchers.IO) {
+    /** 删除不在在途队列中的暂存缓存(分享/root 桥共用此回收,启动时调用) */
+    private suspend fun cleanupOrphanCache() = withContext(Dispatchers.IO) {
         val keep = dao.inFlight().mapTo(mutableSetOf()) { it.localPath }
-        File(context.cacheDir, "share").listFiles()?.forEach { f ->
-            if (f.absolutePath !in keep) f.delete()
+        listOf("share", "root").forEach { sub ->
+            File(context.cacheDir, sub).listFiles()?.forEach { f ->
+                if (f.absolutePath !in keep) f.delete()
+            }
         }
     }
 

@@ -339,6 +339,10 @@ private fun BrowserPane(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(side.nameForUi(), style = MaterialTheme.typography.labelLarge, color = accent)
+            if (state.viaRoot) {
+                Spacer(Modifier.width(6.dp))
+                Text("root", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
+            }
             Spacer(Modifier.weight(1f))
             onOpenGallery?.let { open ->
                 FilledTonalIconButton(onClick = open, modifier = Modifier.size(30.dp)) {

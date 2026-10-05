@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tomcat927.miscuploader.core.OpenListApiException
 import com.tomcat927.miscuploader.data.ConnectionManager
+import com.tomcat927.miscuploader.data.RootEntry
+import com.tomcat927.miscuploader.data.RootShell
 import com.tomcat927.miscuploader.data.SettingsRepository
 import com.tomcat927.miscuploader.data.UploadMode
 import com.tomcat927.miscuploader.data.UploadPlanning
@@ -43,6 +45,7 @@ import kotlinx.coroutines.withContext
 class HomeViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val connection: ConnectionManager,
+    private val rootShell: RootShell,
     private val uploadRepository: UploadRepository,
     private val settings: SettingsRepository,
 ) : ViewModel() {
@@ -330,6 +333,38 @@ class HomeViewModel @Inject constructor(
             val mode = settings.loadUploadModeOnce()
             val manualTarget = _right.value.path
             val currentLocal = _left.value.path
+            if (_left.value.viaRoot) {
+                // root 桥入队(拍板 2026-10-05):su 拷缓存后走统一入队,归类语义与普通路径一致
+                events.emit("正在通过 root 读取所选内容…")
+                try {
+                    val entriesByName = _left.value.entries.associateBy { it.name }
+                    val rootEntries = selected.mapNotNull(entriesByName::get).flatMap { item ->
+                        if (item.isDir) {
+                            rootShell.listFilesRecursive(joinPath(currentLocal, item.name))
+                        } else {
+                            listOf(
+                                RootEntry(
+                                    path = joinPath(currentLocal, item.name),
+                                    name = item.name,
+                                    isDir = false,
+                                    size = item.size,
+                                    mtimeMs = item.mtimeMs ?: System.currentTimeMillis(),
+                                ),
+                            )
+                        }
+                    }
+                    val count = uploadRepository.enqueueFromRoot(currentLocal, rootEntries, mode, manualTarget)
+                    if (count > 0) {
+                        _selectedLeft.value = emptySet()
+                        events.emit("已加入队列：$count 个文件")
+                    } else {
+                        events.emit("没有可上传的文件")
+                    }
+                } catch (e: Exception) {
+                    events.emit(e.message ?: "root 读取失败")
+                }
+                return@launch
+            }
             val tasks = mutableListOf<UploadTask>()
             selected.forEach { name ->
                 val f = File(joinPath(currentLocal, name))
@@ -549,36 +584,72 @@ class HomeViewModel @Inject constructor(
         stateFlowOf(side).update { it.copy(path = path, loading = true, error = null) }
         viewModelScope.launch {
             try {
-                val entries = when (side) {
-                    Side.LEFT -> listLocal(path)
-                    Side.RIGHT -> listRemote(path, refresh)
+                when (side) {
+                    Side.LEFT -> {
+                        val (items, viaRoot) = listLocal(path)
+                        stateFlowOf(side).update { it.copy(entries = items, viaRoot = viaRoot, loading = false) }
+                    }
+
+                    Side.RIGHT -> {
+                        val entries = listRemote(path, refresh)
+                        stateFlowOf(side).update { it.copy(entries = entries, loading = false) }
+                    }
                 }
-                stateFlowOf(side).update { it.copy(entries = entries, loading = false) }
             } catch (e: Exception) {
                 stateFlowOf(side).update { it.copy(loading = false, error = e.message ?: "加载失败") }
             }
         }
     }
 
-    private suspend fun listLocal(path: String): List<FileItem> = withContext(Dispatchers.IO) {
+    /** 本地列目录 + root 回落(拍板 2026-10-05):File.listFiles() 失败 → su 列取(Android/data 等受限目录) */
+    private suspend fun listLocal(path: String): Pair<List<FileItem>, Boolean> = withContext(Dispatchers.IO) {
         val files = File(path).listFiles()
-            ?: throw IOException(
+        if (files != null) {
+            Pair(
+                files.map { f ->
+                    FileItem(
+                        name = f.name,
+                        isDir = f.isDirectory,
+                        size = f.length(),
+                        modifiedText = formatTime(f.lastModified()),
+                        mtimeMs = f.lastModified(),
+                    )
+                }.sortedWith(ITEM_ORDER),
+                false,
+            )
+        } else {
+            Pair(listViaRoot(path), true)
+        }
+    }
+
+    private suspend fun listViaRoot(path: String): List<FileItem> {
+        if (!rootShell.ensureAvailable()) {
+            throw IOException(
                 if (path.contains("Android/data") || path.contains("Android/obb")) {
-                    "Android 11+ 系统限制：普通应用（含「所有文件访问」权限）无法读取此目录\n" +
-                        "可在原应用或其他文件管理器里选中文件「分享到杂物上传」"
+                    "Android 11+ 系统限制：普通应用（含「所有文件访问」权限）无法读取此目录；" +
+                        "root 不可用或未授权\n可在原应用或其他文件管理器里选中文件「分享到杂物上传」"
                 } else {
-                    "无法读取该目录（系统目录或权限不足）"
+                    "无法读取该目录（系统目录或权限不足；root 不可用或未授权）"
                 },
             )
-        files.map { f ->
-            FileItem(
-                name = f.name,
-                isDir = f.isDirectory,
-                size = f.length(),
-                modifiedText = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(Date(f.lastModified())),
-            )
-        }.sortedWith(ITEM_ORDER)
+        }
+        return try {
+            rootShell.list(path).map { e ->
+                FileItem(
+                    name = e.name,
+                    isDir = e.isDir,
+                    size = e.size,
+                    modifiedText = formatTime(e.mtimeMs),
+                    mtimeMs = e.mtimeMs,
+                )
+            }.sortedWith(ITEM_ORDER)
+        } catch (e: Exception) {
+            throw IOException("root 列目录失败：${e.message}")
+        }
     }
+
+    private fun formatTime(ms: Long): String =
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(Date(ms))
 
     private suspend fun listRemote(path: String, refresh: Boolean): List<FileItem> {
         val client = connection.clientOrNull()

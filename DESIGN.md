@@ -26,7 +26,7 @@
 | 连接测试（M1） | 「连接」= 保存 + login + list("/") 一步，已连接卡片显示根目录项数；启动时配置齐全自动连接（MiscApp → ConnectionManager） |
 | 协议回归测试（M1） | `OpenListClientTest`（MockWebServer，9 例）：token 透传 / 401 重登一次 / 防无限循环 / File-Path 编码还原 / 流式+进度 / Overwrite 头 / 200+HTML 假成功防御 / 403 同名闸门——质量门从空转变为真门 |
 | 底部导航（M2） | 文件/队列/设置 三 tab，`rememberSaveable` 状态切换，**不上 navigation-compose**；页数据在 ViewModel 切 tab 不丢，列表滚动位置不保留（已知边界） |
-| 存储权限（M2） | `MANAGE_EXTERNAL_STORAGE` + `isExternalStorageManager()` 检测；未授权时左栏显示授权卡片（去授权/重检）；R 以下(minSdk 26~28)视为已授权、由 listFiles 报错兜底（用户设备 R+，已知边界）；`Android/data` 系统限制不可读（已知边界） |
+| 存储权限（M2） | `MANAGE_EXTERNAL_STORAGE` + `isExternalStorageManager()` 检测；未授权时左栏显示授权卡片（去授权/重检）；R 以下(minSdk 26~28)视为已授权、由 listFiles 报错兜底（用户设备 R+，已知边界）；`Android/data` 系统限制不可读（root 桥回落解决，见 2026-10-05 行） |
 | 双栏交互（M2） | 左=本地右=远程；触摸聚焦（聚焦指示条 + 底部操作条高亮）；聚焦侧单列 / 非聚焦侧两列 Grid；展开动画 = weight 400ms tween（9.9/0.1 近似 SplitLanzou 的 1px 压缩），展开态边缘把手恢复双栏；面包屑 + 列表首项「..」双导航；单侧刷新按钮 |
 | 远程浏览边界（M2） | 浏览一律 `refresh=false`（避免频繁刷 OpenList 目录缓存；上传后的定向刷新在 M3）；`per_page=1000` 单页，total>1000 的目录极少见（加载更多留 V1.1） |
 | 列表排序（M2） | 目录优先 + 名称不区分大小写升序，本地/远程一致；文件单击 M2 无操作（M3 接多选/上传） |
@@ -37,6 +37,7 @@
 | M3 已知边界 | 分享接收（ACTION_SEND）移至 M4；诊断页（日志/ApplicationExitInfo）随 M4 一起；DAO 无单元测试（需 Robolectric/仪器，V1.1 评估）；Android 13+ 通知权限未主动请求（前台服务仍运行，可系统设置授予） |
 | 分享接收（M4） | SEND/SEND_MULTIPLE + `*/*`，MainActivity singleTask + onNewIntent；**content:// 先拷贝到 app cache 再按文件入队**（队列/重试逻辑不变；成功后的孤儿缓存由启动清理回收）；目标统一 = 仓库根目录 `/`（默认目录设置项留 V1.1）；未连接时任务排队，连接成功自动恢复 |
 | 诊断（M4） | **诊断能力下沉**（零本地环境的排查窗口）：AppLogger 文件 ring 日志（filesDir/diagnostics/upload.log，256KB 截半，只存本机）打点入队/上传/失败/重试/连接；`ApplicationExitInfo` 最近 5 次退出原因（Android 11+，识别厂商杀后台）；设置页底部诊断卡展开查看 + 复制全部 |
+| root 桥（2026-10-05） | 左栏 `File.listFiles()` 失败时回落 su 列目录（**libsu 5.2.2** 常驻会话；首次触发 Magisk 授权框，拒绝后本进程内不再重试）；多选上传 = 逐文件 `cat` 拷 cache/root 后入队（与分享路径同构；单文件失败跳过不中断整批）；自动归类按 ls/stat 解析的 mtime（解析失败落回当下，同分享语义）。背景：「所有文件访问」不覆盖其它 app 的 Android/data、Android/obb，SAF 树授权 Android 13+ 被封，root(uid 0) 是唯一无系统版本分岔的通路。已知边界：文件名含换行不可读；symlink 一律按文件；0 字节文件跳过；大目录逐文件拷贝慢（FUSE 双份 IO，走 /data/media 绕行留优化）；左栏 root 目录显示「root」徽标 |
 | 上传模式（A2） | 设置项：手动目录（默认，现状）/ 按日期自动；**自动 = 按每个文件自身 mtime → `auto/yyyy/MM`**（本地时区），文件夹内部结构保留在月份目录下、多 mtime 会跨月（桌面端同语义）；分享接收在自动模式按**分享时刻**归类（content 无可靠 mtime）；手动模式行为不变 |
 | 入队任务制（A2） | `enqueue(tasks: List<UploadTask>)`——目标目录规划全部在入队侧完成（VM/分享），服务只管按 remotePath 上传；`UploadPlanning.autoDirFor/joinRemotePath` 单测覆盖（含时区固定） |
 | 修正（A2 顺带） | **M3 遗留 bug**：服务上传前未建远程目录，文件夹上传/auto 目录必失败 → `RemoteStorage.mkdirp`（逐级 mkdir 忽略"已存在"，misc-sync.py 同款），服务在 PUT 前调用 |
@@ -90,6 +91,7 @@ SHA-256 去重（本地历史：sha → 最新远程路径）、`auto/YYYY/MM` �
 - M4 分享接收 + 诊断 ✅（2026-10-03）——V1 里程碑完成
 - **A2 自动归类（本提交）**：上传模式设置项（手动/按日期自动）+ 任务制入队 + mkdirp 修正 M3 文件夹上传 bug
 - **文件查看（2026-10-04）**：FileKind 路由 + 图片/文本内置查看器 + 其余委托系统 + 协议层 fileInfo/downloadTo（raw_url host 修正）；真机实测并入用户侧清单
+- **root 桥（2026-10-05）**：左栏受限目录（Android/data）su 回落浏览 + 多选拷缓存入队（拍板表 2026-10-05 行）
 - 待拍板/待做：A1 去重+历史 / C 归档状态可见 / B 桌面端重构 / D1 PiGallery2 深链；P0 实测仍欠
 - M3 多选 + 上传队列 + 前台服务 + 进度（MVP 可用）
 - M4 V1.1（去重 / 归类 / 历史）
