@@ -1,6 +1,6 @@
 package com.tomcat927.miscuploader.data
 
-import com.github.topjohnwu.libsu.Shell
+import com.topjohnwu.libsu.Shell
 import java.io.File
 import java.io.IOException
 import javax.inject.Inject
