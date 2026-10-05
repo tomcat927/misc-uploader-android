@@ -18,9 +18,12 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.menuAnchor
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -202,7 +205,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
     }
 }
 
-/** 上传设置(拍板 2026-10-04:并发/最大重试/仅 Wi-Fi/默认分享目录) */
+/** 上传设置(拍板 2026-10-04;2026-10-05 修订:并发/重试改下拉+自定义,更省空间) */
 @Composable
 private fun UploadSettingsCard(
     concurrency: Int,
@@ -219,18 +222,21 @@ private fun UploadSettingsCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("上传设置", style = MaterialTheme.typography.titleSmall)
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("并发数", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(76.dp))
-                listOf(1, 2, 3, 4).forEach { n ->
-                    FilterChip(selected = concurrency == n, onClick = { onConcurrency(n) }, label = { Text("$n") })
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("最大重试", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.width(76.dp))
-                listOf(0, 1, 2, 3, 5).forEach { n ->
-                    FilterChip(selected = maxRetries == n, onClick = { onMaxRetries(n) }, label = { Text("$n") })
-                }
-            }
+            DropdownSetting(
+                label = "并发数",
+                value = concurrency,
+                presets = listOf(1, 2, 3, 4),
+                range = 1..16,
+                onPick = onConcurrency,
+            )
+            DropdownSetting(
+                label = "最大重试",
+                value = maxRetries,
+                presets = listOf(0, 1, 2, 3, 5),
+                range = 0..10,
+                suffix = " 次",
+                onPick = onMaxRetries,
+            )
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -262,6 +268,108 @@ private fun UploadSettingsCard(
             )
         }
     }
+}
+
+/** 下拉选择(预设 + 自定义;2026-10-05 拍板:替代 chips,省空间且范围不限预设) */
+@Composable
+private fun DropdownSetting(
+    label: String,
+    value: Int,
+    presets: List<Int>,
+    range: IntRange,
+    suffix: String = "",
+    onPick: (Int) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var customizing by remember { mutableStateOf(false) }
+    val display = if (value in presets) "$value$suffix" else "自定义（$value$suffix）"
+
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = display,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            modifier = Modifier.menuAnchor().fillMaxWidth(),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            presets.forEach { p ->
+                DropdownMenuItem(
+                    text = { Text("$p$suffix" + if (p == value) " ✓" else "") },
+                    onClick = {
+                        onPick(p)
+                        expanded = false
+                    },
+                )
+            }
+            DropdownMenuItem(
+                text = { Text("自定义…") },
+                onClick = {
+                    customizing = true
+                    expanded = false
+                },
+            )
+        }
+    }
+
+    if (customizing) {
+        CustomValueDialog(
+            title = label,
+            initial = value,
+            range = range,
+            suffix = suffix,
+            onConfirm = {
+                onPick(it)
+                customizing = false
+            },
+            onDismiss = { customizing = false },
+        )
+    }
+}
+
+@Composable
+private fun CustomValueDialog(
+    title: String,
+    initial: Int,
+    range: IntRange,
+    suffix: String,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember { mutableStateOf(initial.toString()) }
+    val parsed = text.toIntOrNull()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("自定义$title") },
+        text = {
+            Column {
+                Text(
+                    "范围 ${range.first}–${range.last}$suffix",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it.filter { ch -> ch.isDigit() } },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { parsed?.let { onConfirm(it.coerceIn(range)) } },
+                enabled = parsed != null,
+            ) {
+                Text("确定")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }
 
 /** 双栏触摸聚焦开关(拍板 2026-10-04:默认开;关闭=两栏恒单列,点击只变高亮不改布局) */

@@ -139,29 +139,29 @@ class SettingsRepository @Inject constructor(
 
     // ---- 上传设置(拍板 2026-10-04;并发/最大重试改动下次队列启动生效) ----
 
-    /** 上传并发数(默认 2,范围 1–4) */
+    /** 上传并发数(默认 2,自定义范围 1–16;2026-10-05 改下拉+自定义) */
     val uploadConcurrencyFlow: Flow<Int> = context.dataStore.data.map { prefs ->
-        (prefs[Keys.UPLOAD_CONCURRENCY] ?: 2).coerceIn(1, 4)
+        (prefs[Keys.UPLOAD_CONCURRENCY] ?: 2).coerceIn(1, 16)
     }
 
     suspend fun loadUploadConcurrencyOnce(): Int = uploadConcurrencyFlow.first()
 
     suspend fun saveUploadConcurrency(value: Int) {
         context.dataStore.edit { prefs ->
-            prefs[Keys.UPLOAD_CONCURRENCY] = value.coerceIn(1, 4)
+            prefs[Keys.UPLOAD_CONCURRENCY] = value.coerceIn(1, 16)
         }
     }
 
-    /** 最大重试次数(默认 3,范围 0–5;退避序列仍为 2s/8s/30s,超出封顶 30s) */
+    /** 最大重试次数(默认 3,自定义范围 0–10;退避序列仍为 2s/8s/30s,超出封顶 30s) */
     val uploadMaxRetriesFlow: Flow<Int> = context.dataStore.data.map { prefs ->
-        (prefs[Keys.UPLOAD_MAX_RETRIES] ?: 3).coerceIn(0, 5)
+        (prefs[Keys.UPLOAD_MAX_RETRIES] ?: 3).coerceIn(0, 10)
     }
 
     suspend fun loadUploadMaxRetriesOnce(): Int = uploadMaxRetriesFlow.first()
 
     suspend fun saveUploadMaxRetries(value: Int) {
         context.dataStore.edit { prefs ->
-            prefs[Keys.UPLOAD_MAX_RETRIES] = value.coerceIn(0, 5)
+            prefs[Keys.UPLOAD_MAX_RETRIES] = value.coerceIn(0, 10)
         }
     }
 
