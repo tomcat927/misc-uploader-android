@@ -15,9 +15,10 @@ class NameMatchingTest {
 
     @Test
     fun `无通配符 - 忽略大小写子串包含`() {
-        assertTrue(NameMatching.matches("apk", "my_app_backup.bin"))
-        assertTrue(NameMatching.matches("APK", "my_app_backup.bin"))
+        assertTrue(NameMatching.matches("apk", "browser_app.apk"))
+        assertTrue(NameMatching.matches("APK", "browser_app.apk"))
         assertTrue(NameMatching.matches("下载", "浏览器下载文件.mp4"))
+        assertFalse(NameMatching.matches("apk", "my_app_backup.bin"))
         assertFalse(NameMatching.matches("xyz", "my_app_backup.bin"))
     }
 
@@ -26,7 +27,8 @@ class NameMatchingTest {
         assertTrue(NameMatching.matches("*.apk", "app.apk"))
         assertTrue(NameMatching.matches("*.APK", "app.apk"))
         assertFalse(NameMatching.matches("*.apk", "app.zip"))
-        assertFalse(NameMatching.matches("*.apk", "dir/app.apk")) // 整名匹配,斜杠不内含
+        // 整名匹配(非包含):*.apk 不误中 "app.apk.bak"
+        assertFalse(NameMatching.matches("*.apk", "app.apk.bak"))
         assertTrue(NameMatching.matches("*download*", "My Download File.apk"))
     }
 
