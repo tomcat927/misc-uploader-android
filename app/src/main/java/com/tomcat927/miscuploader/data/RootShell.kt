@@ -66,6 +66,23 @@ class RootShell @Inject constructor(private val logger: AppLogger) {
     }
 
     /**
+     * 按名字找文件(全局搜索用):find -iname 大小写不敏感通配匹配 + stat 带出大小/mtime。
+     * 无通配符的关键词包成 *kw*;一次性命令,无逐条进度(拍板 2026-10-05 已知边界)。
+     */
+    suspend fun searchFiles(dir: String, recursive: Boolean, pattern: String): List<RootEntry> =
+        withContext(Dispatchers.IO) {
+            val trimmed = pattern.trim()
+            val glob = if ('*' in trimmed || '?' in trimmed) trimmed else "*$trimmed*"
+            val depth = if (recursive) "" else " -maxdepth 1"
+            val cmd = "find ${quote(dir)}$depth -type f -iname ${quote(glob)} -exec stat -c '%s %Y %n' {} \\;"
+            val result = Shell.cmd(cmd).exec()
+            if (!result.isSuccess) {
+                throw IOException(result.err.firstOrNull() ?: "find 退出码 ${result.code}")
+            }
+            result.out.mapNotNull { LsParser.parseStatLine(it) }
+        }
+
+    /**
      * root 流式读取文件到本地缓存(SuFileInputStream,io 模块——core 的 Job API 无 stdout 转 OutputStream)。
      * expectedSize 来自列目录结果,不符视为读取不完整并删除残件。
      */

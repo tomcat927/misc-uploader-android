@@ -26,7 +26,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -77,6 +80,19 @@ class HomeViewModel @Inject constructor(
     val leftSort: StateFlow<SortSpec> = _leftSort.asStateFlow()
     val rightSort: StateFlow<SortSpec> = _rightSort.asStateFlow()
 
+    // ---- 目录内实时过滤(拍板 2026-10-05,MT 同款;与隐藏/类型/排序叠加,换目录即清空) ----
+
+    private val _leftQuery = MutableStateFlow("")
+    private val _rightQuery = MutableStateFlow("")
+    val leftQuery: StateFlow<String> = _leftQuery.asStateFlow()
+    val rightQuery: StateFlow<String> = _rightQuery.asStateFlow()
+
+    fun setQuery(side: Side, query: String) {
+        queryOf(side).value = query
+    }
+
+    private fun queryOf(side: Side) = if (side == Side.LEFT) _leftQuery else _rightQuery
+
     fun setCategory(side: Side, category: FileCategory) {
         categoryOf(side).value = category
     }
@@ -95,14 +111,20 @@ class HomeViewModel @Inject constructor(
 
     private fun sortOf(side: Side) = if (side == Side.LEFT) _leftSort else _rightSort
 
-    /** 展示侧统一加工:隐藏过滤 → 类型过滤(目录恒显示) → 排序(目录恒优先) */
+    /**
+     * 展示侧统一加工(拍板 2026-10-05):隐藏过滤 → 目录内关键词过滤 → 类型过滤 → 排序。
+     * 搜索词非空时目录也参与名字匹配(不再"目录恒显示"),否则结果被目录盖住;空词 = 行为不变。
+     */
     private fun processEntries(
         entries: List<FileItem>,
         show: Boolean,
+        query: String,
         category: FileCategory,
         sort: SortSpec,
     ): List<FileItem> = entries
         .filter { show || !it.name.startsWith(".") }
+        .filter { query.isBlank() || it.name.contains(query.trim(), ignoreCase = true) }
+        // 类型过滤:目录恒过本关(关键词关已先行过滤不匹配的目录),文件按分类
         .filter { it.isDir || category == FileCategory.ALL || FileCategory.of(it.name) == category }
         .let { list ->
             val cmp = when (sort.field) {
@@ -113,17 +135,23 @@ class HomeViewModel @Inject constructor(
             list.sortedWith(compareByDescending<FileItem> { it.isDir }.then(if (sort.asc) cmp else cmp.reversed()))
         }
 
-    /** 浏览列表 = 完整条目按「显示隐藏 + 类型过滤 + 排序」加工(切换即生效,无需刷新) */
+    /** 浏览列表 = 完整条目按「显示隐藏 + 关键词 + 类型过滤 + 排序」加工(切换即生效,无需刷新) */
     val left: StateFlow<BrowserState> = combine(
-        _left, settings.showHiddenFlow, _leftCategory, _leftSort,
-    ) { state, show, cat, sort ->
-        state.copy(entries = processEntries(state.entries, show, cat, sort))
+        _left, settings.showHiddenFlow, _leftQuery, _leftCategory, _leftSort,
+    ) { state, show, query, cat, sort ->
+        state.copy(
+            entries = processEntries(state.entries, show, query, cat, sort),
+            totalCount = state.entries.size,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _left.value)
 
     val right: StateFlow<BrowserState> = combine(
-        _right, settings.showHiddenFlow, _rightCategory, _rightSort,
-    ) { state, show, cat, sort ->
-        state.copy(entries = processEntries(state.entries, show, cat, sort))
+        _right, settings.showHiddenFlow, _rightQuery, _rightCategory, _rightSort,
+    ) { state, show, query, cat, sort ->
+        state.copy(
+            entries = processEntries(state.entries, show, query, cat, sort),
+            totalCount = state.entries.size,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), _right.value)
 
     private val _storageGranted = MutableStateFlow(false)
@@ -315,10 +343,12 @@ class HomeViewModel @Inject constructor(
         _selectedLeft.value = emptySet()
     }
 
-    /** 全选 = 当前可见条目(含目录;右栏剔除受保护 auto);与过滤/隐藏/排序联动 */
+    /** 全选 = 当前可见条目(含目录;右栏剔除受保护 auto);与隐藏/搜索/类型/排序联动 */
     fun selectAll(side: Side) {
         val state = stateOf(side)
-        val names = processEntries(state.entries, showHidden.value, categoryOf(side).value, sortOf(side).value)
+        val names = processEntries(
+            state.entries, showHidden.value, queryOf(side).value, categoryOf(side).value, sortOf(side).value,
+        )
             .filterNot { side == Side.RIGHT && it.isDir && isProtectedRemoteEntry(state.path, it.name) }
             .map { it.name }
             .toSet()
@@ -434,8 +464,10 @@ class HomeViewModel @Inject constructor(
 
     private fun openViewer(side: Side, item: FileItem, kind: FileKind) {
         val state = stateOf(side)
-        // 翻页列表与浏览列表同源:同样按「显示隐藏 + 类型过滤」加工
-        val visible = processEntries(state.entries, showHidden.value, categoryOf(side).value, sortOf(side).value)
+        // 翻页列表与浏览列表同源:同样按「显示隐藏 + 关键词 + 类型过滤」加工
+        val visible = processEntries(
+            state.entries, showHidden.value, queryOf(side).value, categoryOf(side).value, sortOf(side).value,
+        )
         val items = if (kind == FileKind.IMAGE) {
             visible.filter { !it.isDir && FileKind.of(it.name) == FileKind.IMAGE }
         } else {
@@ -491,6 +523,168 @@ class HomeViewModel @Inject constructor(
             onProgress(if (total > 0) sent.toFloat() / total else 0f)
         }
         return target
+    }
+
+    // ---- 全局搜索(拍板 2026-10-05,MT 同款裁剪:本地侧含 root 桥;结果页临时多选直接入队) ----
+
+    private val _search = MutableStateFlow<LocalSearchState?>(null)
+    val search: StateFlow<LocalSearchState?> = _search.asStateFlow()
+
+    private val _searchSelection = MutableStateFlow<Set<String>>(emptySet())
+    val searchSelection: StateFlow<Set<String>> = _searchSelection.asStateFlow()
+
+    private var searchJob: Job? = null
+
+    /** 打开搜索面板:范围 = 打开时左栏所在目录(root 桥目录同样支持) */
+    fun openSearch() {
+        val left = _left.value
+        _searchSelection.value = emptySet()
+        _search.value = LocalSearchState(scopeDir = left.path, viaRoot = left.viaRoot)
+    }
+
+    fun updateSearchQuery(query: String) = editSearchInput { it.copy(query = query) }
+
+    fun setSearchRecursive(recursive: Boolean) = editSearchInput { it.copy(recursive = recursive) }
+
+    fun setSearchCategory(category: FileCategory) = editSearchInput { it.copy(category = category) }
+
+    fun setSearchTimeRange(range: SearchTimeRange) = editSearchInput { it.copy(timeRange = range) }
+
+    /** 仅输入阶段可改条件(结果阶段改条件语义混乱,须重新发起) */
+    private fun editSearchInput(edit: (LocalSearchState) -> LocalSearchState) {
+        _search.update { s -> if (s?.phase == LocalSearchState.Phase.INPUT) edit(s) else s }
+    }
+
+    fun runSearch() {
+        val s = _search.value ?: return
+        if (s.query.isBlank()) {
+            viewModelScope.launch { events.emit("请输入搜索关键词") }
+            return
+        }
+        searchJob?.cancel()
+        _searchSelection.value = emptySet()
+        _search.update { it?.copy(phase = LocalSearchState.Phase.RUNNING, scanned = 0, results = emptyList()) }
+        searchJob = viewModelScope.launch {
+            val hits = try {
+                if (s.viaRoot) searchViaRoot(s) else searchViaWalk(s)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                events.emit("搜索失败：${e.message ?: e.javaClass.simpleName}")
+                _search.update { it?.copy(phase = LocalSearchState.Phase.DONE) }
+                return@launch
+            }
+            _search.update {
+                it?.copy(phase = LocalSearchState.Phase.DONE, results = hits, scanned = hits.size)
+            }
+        }
+    }
+
+    /** 停止:普通目录走增量扫描,停止即保留已扫出的部分;root find 为一次性命令,只能放弃整体等待 */
+    fun stopSearch() {
+        searchJob?.cancel()
+        _search.update { it?.copy(phase = LocalSearchState.Phase.DONE) }
+    }
+
+    fun closeSearch() {
+        searchJob?.cancel()
+        _search.value = null
+        _searchSelection.value = emptySet()
+    }
+
+    fun toggleSearchSelect(hit: SearchHit) {
+        _searchSelection.update { set -> if (hit.path in set) set - hit.path else set + hit.path }
+    }
+
+    fun selectAllSearchResults() {
+        _search.value?.let { _searchSelection.value = it.results.mapTo(mutableSetOf()) { h -> h.path } }
+    }
+
+    /** 点击单条 = 跳转定位:加载所在目录并选中该文件(浏览侧现有多选高亮即定位效果),关闭搜索页 */
+    fun locateResult(hit: SearchHit) {
+        closeSearch()
+        load(Side.LEFT, hit.path.substringBeforeLast('/'))
+        _selectedLeft.value = setOf(hit.name)
+    }
+
+    /** 结果直接入队(拍板:不动"多选不跨目录"状态机);rel 平铺文件名,目标语义与目录内上传一致 */
+    fun uploadSearchResults(all: Boolean) {
+        val s = _search.value ?: return
+        val hits = if (all) s.results else s.results.filter { it.path in _searchSelection.value }
+        if (hits.isEmpty()) {
+            viewModelScope.launch { events.emit("没有可上传的文件") }
+            return
+        }
+        viewModelScope.launch {
+            val mode = settings.loadUploadModeOnce()
+            val manualTarget = _right.value.path
+            try {
+                if (s.viaRoot) {
+                    events.emit("正在通过 root 读取所选内容…")
+                    val entries = hits.map {
+                        RootEntry(path = it.path, name = it.name, isDir = false, size = it.size, mtimeMs = it.mtimeMs)
+                    }
+                    val n = uploadRepository.enqueueFromRoot(s.scopeDir, entries, mode, manualTarget)
+                    if (n > 0) closeSearch()
+                    events.emit(if (n > 0) "已加入队列：$n 个文件" else "没有可上传的文件")
+                } else {
+                    val tasks = hits.map { hit ->
+                        val f = File(hit.path)
+                        UploadTask(
+                            file = f,
+                            remoteDir = if (mode == UploadMode.AUTO_DATE) {
+                                UploadPlanning.autoDirFor(f.lastModified())
+                            } else {
+                                UploadPlanning.normalizeDir(manualTarget)
+                            },
+                            rel = hit.name,
+                        )
+                    }
+                    uploadRepository.enqueue(tasks)
+                    closeSearch()
+                    events.emit("已加入队列：${tasks.size} 个文件")
+                }
+            } catch (e: Exception) {
+                events.emit(e.message ?: "读取失败")
+            }
+        }
+    }
+
+    /** 普通目录:walkTopDown 增量扫描,每 32 个文件回报一次进度并可取消(协程取消点) */
+    private suspend fun searchViaWalk(s: LocalSearchState): List<SearchHit> = withContext(Dispatchers.IO) {
+        val since = s.timeRange.sinceMs(System.currentTimeMillis())
+        val root = File(s.scopeDir)
+        val walk = if (s.recursive) root.walkTopDown() else root.walkTopDown().maxDepth(1)
+        val out = mutableListOf<SearchHit>()
+        var scanned = 0
+        val iterator = walk.iterator()
+        while (iterator.hasNext()) {
+            val f = iterator.next()
+            if (!f.isFile) continue
+            scanned++
+            if (scanned % 32 == 0) {
+                _search.update { st -> st?.copy(scanned = scanned, results = out.toList()) }
+                ensureActive()
+            }
+            if (s.category != FileCategory.ALL && FileCategory.of(f.name) != s.category) continue
+            if (!NameMatching.matches(s.query, f.name)) continue
+            val mtime = f.lastModified()
+            if (since != null && mtime < since) continue
+            out += SearchHit(f.absolutePath, f.name, f.length(), mtime)
+        }
+        out
+    }
+
+    /** root 桥目录:find 一次性出结果(无逐条进度,见 stopSearch 注);类型/时间过滤与普通路径同谓词 */
+    private suspend fun searchViaRoot(s: LocalSearchState): List<SearchHit> {
+        if (!rootShell.ensureAvailable()) throw IOException("root 不可用或未授权")
+        val entries = rootShell.searchFiles(s.scopeDir, s.recursive, s.query)
+        val since = s.timeRange.sinceMs(System.currentTimeMillis())
+        return entries.asSequence()
+            .filter { s.category == FileCategory.ALL || FileCategory.of(it.name) == s.category }
+            .filter { since == null || it.mtimeMs >= since }
+            .map { SearchHit(it.path, it.name, it.size, it.mtimeMs) }
+            .toList()
     }
 
     // ---- 导航 ----
@@ -577,9 +771,15 @@ class HomeViewModel @Inject constructor(
     // ---- 内部 ----
 
     private fun load(side: Side, path: String, refresh: Boolean = false) {
-        // 换目录即清空多选(拍板:多选不跨目录保留;本地/远程同规则)
+        // 换目录即清空多选与目录内搜索词(拍板:不跨目录保留;本地/远程同规则)
         if (stateFlowOf(side).value.path != path) {
-            if (side == Side.LEFT) _selectedLeft.value = emptySet() else _selectedRight.value = emptySet()
+            if (side == Side.LEFT) {
+                _selectedLeft.value = emptySet()
+                _leftQuery.value = ""
+            } else {
+                _selectedRight.value = emptySet()
+                _rightQuery.value = ""
+            }
         }
         stateFlowOf(side).update { it.copy(path = path, loading = true, error = null) }
         viewModelScope.launch {

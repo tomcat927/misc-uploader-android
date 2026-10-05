@@ -20,4 +20,6 @@ data class BrowserState(
     val error: String? = null,
     /** 左栏当前目录经 root 桥列出(拍板 2026-10-05);右栏恒 false */
     val viaRoot: Boolean = false,
+    /** 加工前完整条目数(entries 为过滤/排序后;搜索激活时 UI 显示"匹配 n / 共 m") */
+    val totalCount: Int = 0,
 )

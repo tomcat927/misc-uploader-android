@@ -38,11 +38,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.ManageSearch
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -100,6 +103,10 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val rightCategory by viewModel.rightCategory.collectAsState()
     val leftSort by viewModel.leftSort.collectAsState()
     val rightSort by viewModel.rightSort.collectAsState()
+    val leftQuery by viewModel.leftQuery.collectAsState()
+    val rightQuery by viewModel.rightQuery.collectAsState()
+    val search by viewModel.search.collectAsState()
+    val searchSelection by viewModel.searchSelection.collectAsState()
     val viewerRequest by viewModel.viewerRequest.collectAsState()
     val context = LocalContext.current
     val galleryUrl = GalleryLink.forDir(pigalleryBase, right.path)
@@ -147,6 +154,9 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onCategory = { viewModel.setCategory(Side.LEFT, it) },
                 sort = leftSort,
                 onSort = { viewModel.setSort(Side.LEFT, it) },
+                query = leftQuery,
+                onQuery = { viewModel.setQuery(Side.LEFT, it) },
+                onOpenSearch = { viewModel.openSearch() },
                 onSelectAll = { viewModel.selectAll(Side.LEFT) },
                 onPaneTouched = { viewModel.focus(Side.LEFT) },
                 onExpandToggle = { viewModel.toggleExpand(Side.LEFT) },
@@ -186,6 +196,9 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onCategory = { viewModel.setCategory(Side.RIGHT, it) },
                 sort = rightSort,
                 onSort = { viewModel.setSort(Side.RIGHT, it) },
+                query = rightQuery,
+                onQuery = { viewModel.setQuery(Side.RIGHT, it) },
+                onOpenSearch = null,
                 onSelectAll = { viewModel.selectAll(Side.RIGHT) },
                 onPaneTouched = { viewModel.focus(Side.RIGHT) },
                 onExpandToggle = { viewModel.toggleExpand(Side.RIGHT) },
@@ -292,6 +305,24 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             onDismiss = { uploadConfirm = false },
         )
     }
+
+    search?.let { s ->
+        LocalSearchDialog(
+            state = s,
+            selection = searchSelection,
+            onQuery = viewModel::updateSearchQuery,
+            onRecursive = viewModel::setSearchRecursive,
+            onCategory = viewModel::setSearchCategory,
+            onTime = viewModel::setSearchTimeRange,
+            onRun = viewModel::runSearch,
+            onStop = viewModel::stopSearch,
+            onToggleSelect = viewModel::toggleSearchSelect,
+            onSelectAll = viewModel::selectAllSearchResults,
+            onLocate = viewModel::locateResult,
+            onUpload = viewModel::uploadSearchResults,
+            onClose = viewModel::closeSearch,
+        )
+    }
 }
 
 // ---- 单侧浏览器 ----
@@ -310,6 +341,11 @@ private fun BrowserPane(
     onCategory: (FileCategory) -> Unit,
     sort: SortSpec,
     onSort: (SortField) -> Unit,
+    /** 目录内关键词过滤(拍板 2026-10-05;空词=不过滤) */
+    query: String,
+    onQuery: (String) -> Unit,
+    /** 全局搜索入口(仅左栏传入;右栏 null 不显示) */
+    onOpenSearch: (() -> Unit)?,
     onSelectAll: () -> Unit,
     onPaneTouched: () -> Unit,
     onExpandToggle: () -> Unit,
@@ -330,6 +366,7 @@ private fun BrowserPane(
     modifier: Modifier = Modifier,
 ) {
     val accent = if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    var searchActive by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier.clickable(interactionSource = null, indication = null, onClick = onPaneTouched),
@@ -391,27 +428,66 @@ private fun BrowserPane(
                 .background(if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant),
         )
 
-        // 工具条:类型过滤 chips + 排序(拍板 2026-10-05,MT 同款能力;目录恒显示不受过滤)
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        // 工具条:类型过滤 chips + 排序 + 搜索过滤(拍板 2026-10-05,MT 同款);搜索态整行替换为输入行
+        if (searchActive) {
             Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                FileCategory.entries.forEach { c ->
-                    FilterChip(
-                        selected = category == c,
-                        onClick = { onCategory(c) },
-                        label = { Text(c.label, style = MaterialTheme.typography.labelSmall) },
-                    )
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQuery,
+                    singleLine = true,
+                    placeholder = { Text("过滤当前目录…", style = MaterialTheme.typography.bodySmall) },
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                )
+                FilledTonalIconButton(
+                    onClick = {
+                        searchActive = false
+                        onQuery("")
+                    },
+                    modifier = Modifier.size(30.dp),
+                ) {
+                    Icon(Icons.Filled.Close, contentDescription = "关闭过滤", modifier = Modifier.size(17.dp))
+                }
+                onOpenSearch?.let { open ->
+                    FilledTonalIconButton(
+                        onClick = open,
+                        modifier = Modifier.padding(start = 6.dp, end = 6.dp).size(30.dp),
+                    ) {
+                        Icon(Icons.Filled.ManageSearch, contentDescription = "全局搜索", modifier = Modifier.size(17.dp))
+                    }
                 }
             }
-            SortMenuButton(sort = sort, onSort = onSort)
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    FileCategory.entries.forEach { c ->
+                        FilterChip(
+                            selected = category == c,
+                            onClick = { onCategory(c) },
+                            label = { Text(c.label, style = MaterialTheme.typography.labelSmall) },
+                        )
+                    }
+                }
+                SortMenuButton(sort = sort, onSort = onSort)
+                FilledTonalIconButton(
+                    onClick = { searchActive = true },
+                    modifier = Modifier.size(30.dp),
+                ) {
+                    Icon(Icons.Filled.Search, contentDescription = "搜索过滤", modifier = Modifier.size(17.dp))
+                }
+            }
         }
 
         Box(Modifier.weight(1f)) {
@@ -478,7 +554,11 @@ private fun BrowserPane(
                 Spacer(Modifier.weight(1f))
                 val dirs = state.entries.count { it.isDir }
                 Text(
-                    "文件夹 $dirs 文件 ${state.entries.size - dirs}",
+                    if (state.totalCount > state.entries.size) {
+                        "匹配 ${state.entries.size} / 共 ${state.totalCount}"
+                    } else {
+                        "文件夹 $dirs 文件 ${state.entries.size - dirs}"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(end = 12.dp),
                 )
