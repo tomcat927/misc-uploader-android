@@ -1,7 +1,12 @@
 package com.tomcat927.miscuploader.ui
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,6 +26,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -62,6 +68,11 @@ fun MainScreen() {
     val showInstallConfirm by updateViewModel.showInstallConfirm.collectAsState()
     val scope = rememberCoroutineScope()
     val activity = LocalContext.current as? Activity
+    val context = LocalContext.current
+    // 13+ 通知运行时授权(拍板 2026-10-06:随"下载并安装"手势请求;结果不阻塞下载,只影响通知可见性)
+    val notifPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
     var lastBackAt by remember { mutableLongStateOf(0L) }
 
     // 系统返回键(拍板 2026-10-04):四级返回链 + 二次确认退出(弹窗打开时由 Dialog 窗口优先消费)
@@ -133,7 +144,16 @@ fun MainScreen() {
                     Text("最新版本 ${s.info.tagName}，是否下载安装？" + (s.info.releaseNotes?.let { "\n\n$it" } ?: ""))
                 },
                 confirmButton = {
-                    TextButton(onClick = updateViewModel::confirmInstall) { Text("下载并安装") }
+                    TextButton(onClick = {
+                        if (
+                            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            notifPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                        updateViewModel.confirmInstall()
+                    }) { Text("下载并安装") }
                 },
                 dismissButton = {
                     TextButton(onClick = updateViewModel::dismissInstallConfirm) { Text("暂不") }

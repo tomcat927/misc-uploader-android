@@ -9,6 +9,8 @@ import androidx.lifecycle.viewModelScope
 import com.tomcat927.miscuploader.data.SettingsRepository
 import com.tomcat927.miscuploader.data.UpdateSourcePreference
 import com.tomcat927.miscuploader.update.UpdateCheckManager
+import com.tomcat927.miscuploader.update.UpdateDownloadService
+import com.tomcat927.miscuploader.update.UpdateDownloadState
 import com.tomcat927.miscuploader.update.UpdateService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -37,6 +39,7 @@ class UpdateViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val updateService: UpdateService,
     private val updateCheckManager: UpdateCheckManager,
+    private val downloadController: UpdateDownloadController,
     private val settings: SettingsRepository,
 ) : ViewModel() {
 
@@ -56,11 +59,6 @@ class UpdateViewModel @Inject constructor(
     /** 静默提示事件:已「暂不」过的版本再次发现时 Snackbar(不弹窗) */
     val snackEvents = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
-    private var downloaded: File? = null
-
-    /** 启动静默检查发现的新版本事件(MainScreen 据此弹窗或 Snackbar) */
-    val foundEvents = updateCheckManager.foundEvents
-
     /** 启动检查更新开关(设置「应用更新」卡内切换) */
     val startupCheckEnabled: StateFlow<Boolean> = settings.startupUpdateCheckFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
@@ -68,6 +66,9 @@ class UpdateViewModel @Inject constructor(
     /** 更新源偏好(拍板 2026-10-06:自动三源链/仅直连/仅镜像;下次检查即生效) */
     val sourcePreference: StateFlow<UpdateSourcePreference> = settings.updateSourceFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UpdateSourcePreference.AUTO)
+
+    /** 启动静默检查发现的新版本事件(MainScreen 据此弹窗或 Snackbar) */
+    val foundEvents = updateCheckManager.foundEvents
 
     init {
         viewModelScope.launch { dismissedTag = settings.updateDismissedTagOnce() }
@@ -78,6 +79,27 @@ class UpdateViewModel @Inject constructor(
                 val s = _state.value
                 if (info != null && (s is UpdateState.Idle || s is UpdateState.NoUpdate || s is UpdateState.Error)) {
                     _state.value = UpdateState.Available(info)
+                }
+            }
+        }
+        // 下载状态由前台服务驱动(拍板 2026-10-06):进度/完成/失败回填卡片;
+        // 只在非交互态覆盖,不打断用户正在进行的检查
+        viewModelScope.launch {
+            downloadController.state.collect { ds ->
+                val s = _state.value
+                when (ds) {
+                    is UpdateDownloadState.Downloading ->
+                        if (s is UpdateState.Downloading) _state.value = UpdateState.Downloading(ds.progress)
+
+                    is UpdateDownloadState.ReadyToInstall ->
+                        _state.value = UpdateState.ReadyToInstall(ds.file, ds.tagName)
+
+                    is UpdateDownloadState.Failed -> if (s is UpdateState.Downloading) {
+                        _showInstallConfirm.value = false
+                        _state.value = UpdateState.Error("下载失败：${ds.message}")
+                    }
+
+                    UpdateDownloadState.Idle -> Unit
                 }
             }
         }
@@ -144,31 +166,17 @@ class UpdateViewModel @Inject constructor(
         _showInstallConfirm.value = false
     }
 
+    /** 确认后开始下载:交给前台服务(拍板 2026-10-06),通知进度+后台存活;卡片状态由服务状态流驱动 */
     fun download() {
         val info = (_state.value as? UpdateState.Available)?.info ?: return
-        viewModelScope.launch {
-            _state.value = UpdateState.Downloading(0f)
-            try {
-                val file = updateService.downloadApk(info) { p ->
-                    _state.value = UpdateState.Downloading(p)
-                }
-                downloaded = file
-                _state.value = UpdateState.ReadyToInstall(file, info.tagName)
-                // 一键到底(2026-10-04 拍板): 关进度弹窗并自动拉起安装器;
-                // 未授权「安装未知应用」时跳授权页,授权返回后由卡片「安装」键续接
-                _showInstallConfirm.value = false
-                install()
-            } catch (e: Exception) {
-                // 下载失败关弹窗,错误信息在设置页卡片展示
-                _showInstallConfirm.value = false
-                _state.value = UpdateState.Error("下载失败：${e.javaClass.simpleName}${e.message?.takeIf { it.isNotBlank() }?.let { m -> "：$m" } ?: ""}")
-            }
-        }
+        downloadController.prepare(info)
+        _state.value = UpdateState.Downloading(0f)
+        context.startForegroundService(Intent(context, UpdateDownloadService::class.java))
     }
 
-    /** 拉起系统安装器;未授权「安装未知应用」时先跳授权页(带 package URI 直达本应用开关) */
+    /** 拉起系统安装器(手动恢复路径,通常由服务完成后自动拉起);未授权「安装未知应用」时先跳授权页 */
     fun install() {
-        val file = downloaded ?: return
+        val file = (downloadController.state.value as? UpdateDownloadState.ReadyToInstall)?.file ?: return
         if (context.packageManager.canRequestPackageInstalls()) {
             context.startActivity(updateService.createInstallIntent(file))
         } else {

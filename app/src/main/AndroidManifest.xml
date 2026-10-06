@@ -51,6 +51,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- 更新包下载前台服务(拍板 2026-10-06:通知进度+后台存活) -->
+        <service
+            android:name=".update.UpdateDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
