@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.tomcat927.miscuploader.data.SettingsRepository
 import com.tomcat927.miscuploader.data.UpdateSourcePreference
 import com.tomcat927.miscuploader.update.UpdateCheckManager
+import com.tomcat927.miscuploader.update.UpdateDownloadController
 import com.tomcat927.miscuploader.update.UpdateDownloadService
 import com.tomcat927.miscuploader.update.UpdateDownloadState
 import com.tomcat927.miscuploader.update.UpdateService
