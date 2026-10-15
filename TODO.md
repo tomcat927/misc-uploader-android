@@ -72,6 +72,10 @@
 
 **修复(2026-10-15,二)**: ① `uploadSelected`/`uploadSearchResults` 的文件夹遍历/建 task 移到 `Dispatchers.IO`(大目录不再卡 UI/ANR);② 存储权限:Manifest 补 `READ_EXTERNAL_STORAGE`(maxSdk 32),`recheckStoragePermission` R 以下改看该权限(之前恒 false),授权卡 R 以下走运行时请求并加「重检」
 
+**P2 已落地(2026-10-15,本地清理建议)**: 左栏底栏「AI 清理」→ `AiSuggest.cleanupPrompt/parseCleanup`(纯函数,`AiSuggestTest` 覆盖) 审查当前目录(文件名+图片缩略图) → 建议清单弹框(勾选) → `applyCleanup` 预选;本地多选新增「删除」→ 强确认 → `deleteSelectedLocal` **软删除**到 `<存储根>/.misc-trash/<时间戳>/`(可移回,不立即释放空间)。红线:AI 永不自动删;解析只认真实文件名。
+
+**P2 实测清单**: ① 进一个乱目录 → 「AI 清理」→ 出建议+理由 → 取消勾选部分 → 「选中这 N 项」→ 左栏多选态;② 「删除」→ 强确认 → 文件消失、`/.misc-trash/<时间戳>/` 下出现、可移回;③ AI 未启用/未配置 → 明确报错;④ 跨存储卷(SD 卡)→ 明确报「移入失败」不静默;⑤ 不点删除时绝不自动删
+
 ## 待办 — 开发队列(按推荐顺序)
 
 1. ~~A1 SHA-256 去重 + 上传历史~~ ✅ 2026-10-04: 内容级去重(同内容任意目录跳过+提示已有路径,PUT 前流式 hash/「校验中」状态)、Room upload_history(sha→最新落点,上限一万自动修剪)、队列页「历史」chip;DB v1→v2 Migration;**顺带修 M3 队列排序 bug(partition 解构颠倒)**——真机实测见下节

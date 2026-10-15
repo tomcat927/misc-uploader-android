@@ -518,6 +518,105 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    // ---- AI 清理建议(P2;拍板:只建议不执行;删除=软删除到 .misc-trash) ----
+
+    private val _cleanup = MutableStateFlow<List<CleanupItem>?>(null)
+    val cleanupSuggestion: StateFlow<List<CleanupItem>?> = _cleanup.asStateFlow()
+
+    private val _cleanupLoading = MutableStateFlow(false)
+    val cleanupLoading: StateFlow<Boolean> = _cleanupLoading.asStateFlow()
+
+    private val _cleanupError = MutableStateFlow<String?>(null)
+    val cleanupError: StateFlow<String?> = _cleanupError.asStateFlow()
+
+    fun dismissCleanup() {
+        _cleanup.value = null
+        _cleanupError.value = null
+        _cleanupLoading.value = false
+    }
+
+    /** 请 AI 审查左栏当前目录的文件,给出「建议清理」清单(文件名+理由);只建议,不删除 */
+    fun requestCleanupSuggestion() {
+        val state = _left.value
+        val files = state.entries.filter { !it.isDir }
+        if (files.isEmpty()) {
+            viewModelScope.launch { events.emit("当前目录没有可分析的文件") }
+            return
+        }
+        viewModelScope.launch {
+            _cleanupLoading.value = true
+            _cleanup.value = null
+            _cleanupError.value = null
+            try {
+                if (!settings.aiStoredConfigFlow.first().enabled) {
+                    throw IllegalStateException("AI 助手未启用（设置 → AI 助手）")
+                }
+                val cfg = settings.loadAiDecryptedOnce()
+                    ?: throw IllegalStateException("未配置 AI 助手（设置 → AI 助手）")
+                if (cfg.model.isBlank()) throw IllegalStateException("未选择 AI 模型（设置 → AI 助手）")
+                val dir = state.path
+                val names = files.map { it.name }
+                val images = withContext(Dispatchers.IO) {
+                    names.asSequence()
+                        .filter { FileKind.of(it) == FileKind.IMAGE }
+                        .mapNotNull { ImageThumb.encode(File(joinPath(dir, it))) }
+                        .take(MAX_SUGGEST_IMAGES)
+                        .toList()
+                }
+                val ai = AiClient(cfg.baseUrl, cfg.apiKey, okHttpClient)
+                val prompt = AiSuggest.cleanupPrompt(dir, names)
+                val raw = if (images.isEmpty()) {
+                    ai.chatText(cfg.model, prompt, AiSuggest.CLEANUP_SYSTEM_PROMPT)
+                } else {
+                    ai.chatVision(cfg.model, prompt, images, AiSuggest.CLEANUP_SYSTEM_PROMPT)
+                }
+                val items = AiSuggest.parseCleanup(raw, names.toSet())
+                    .map { CleanupItem(it.first, it.second) }
+                if (items.isEmpty()) _cleanupError.value = "AI 未给出清理建议"
+                else _cleanup.value = items
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _cleanupError.value = e.message ?: e.javaClass.simpleName
+            } finally {
+                _cleanupLoading.value = false
+            }
+        }
+    }
+
+    /** 采纳清理建议:预选这些项(进入左栏多选态,用户再点「删除」确认) */
+    fun applyCleanup(names: List<String>) {
+        _selectedLeft.value = names.toSet()
+    }
+
+    /** 本地多选「删除」= 软删除:移动到 <存储根>/.misc-trash/<时间戳>/(可移回),非真删 */
+    fun deleteSelectedLocal() {
+        val selected = _selectedLeft.value
+        if (selected.isEmpty()) return
+        val dir = _left.value.path
+        viewModelScope.launch {
+            val moved = withContext(Dispatchers.IO) {
+                val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.CHINA).format(Date())
+                val trash = File(localRoot, ".misc-trash/$stamp")
+                var n = 0
+                selected.forEach { name ->
+                    val src = File(joinPath(dir, name))
+                    if (!src.exists()) return@forEach
+                    val dst = File(trash, name)
+                    dst.parentFile?.mkdirs()
+                    if (src.renameTo(dst)) n++
+                }
+                n
+            }
+            _selectedLeft.value = emptySet()
+            events.emit(
+                if (moved > 0) "已移入回收站 $moved 项（.misc-trash，可移回）"
+                else "移入回收站失败（跨存储卷或权限不足）",
+            )
+            load(Side.LEFT, dir, refresh = true)
+        }
+    }
+
     // ---- 文件查看(拍板 2026-10-04:图片/文本内置,其余委托系统;先于 A1) ----
 
     private val _viewerRequest = MutableStateFlow<ViewerRequest?>(null)

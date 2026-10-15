@@ -40,6 +40,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Close
@@ -120,6 +121,9 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val aiSuggestion by viewModel.aiSuggestion.collectAsState()
     val aiSuggesting by viewModel.aiSuggesting.collectAsState()
     val aiSuggestError by viewModel.aiSuggestError.collectAsState()
+    val cleanupSuggestion by viewModel.cleanupSuggestion.collectAsState()
+    val cleanupLoading by viewModel.cleanupLoading.collectAsState()
+    val cleanupError by viewModel.cleanupError.collectAsState()
     val context = LocalContext.current
     val galleryUrl = GalleryLink.forDir(pigalleryBase, right.path)
     val snackbarHostState = remember { SnackbarHostState() }
@@ -127,6 +131,8 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     var uploadConfirm by remember { mutableStateOf(false) }
     var remoteMovePicker by remember { mutableStateOf(false) }
     var remoteDeleteConfirm by remember { mutableStateOf(false) }
+    var localDeleteConfirm by remember { mutableStateOf(false) }
+    var cleanupOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { snackbarHostState.showSnackbar(it) }
@@ -193,7 +199,11 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onItemToggleSelect = viewModel::toggleSelect,
                 onUploadSelection = { viewModel.clearSuggestion(); uploadConfirm = true },
                 onMoveSelection = {},
-                onDeleteSelection = {},
+                onDeleteSelection = { localDeleteConfirm = true },
+                onAiCleanup = {
+                    cleanupOpen = true
+                    viewModel.requestCleanupSuggestion()
+                },
                 onCancelSelection = viewModel::clearSelection,
                 onRecheckStorage = {
                     viewModel.recheckStoragePermission()
@@ -246,6 +256,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onUploadSelection = {},
                 onMoveSelection = { remoteMovePicker = true },
                 onDeleteSelection = { remoteDeleteConfirm = true },
+                onAiCleanup = null,
                 onCancelSelection = viewModel::clearSelectionRight,
                 onRecheckStorage = {},
                 modifier = Modifier.weight(rightWeight).fillMaxHeight(),
@@ -336,6 +347,34 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
         )
     }
 
+    if (cleanupOpen) {
+        CleanupSuggestionDialog(
+            suggestions = cleanupSuggestion ?: emptyList(),
+            loading = cleanupLoading,
+            error = cleanupError,
+            onApply = { names ->
+                viewModel.applyCleanup(names)
+                cleanupOpen = false
+                viewModel.dismissCleanup()
+            },
+            onDismiss = {
+                cleanupOpen = false
+                viewModel.dismissCleanup()
+            },
+        )
+    }
+
+    if (localDeleteConfirm && selectedLeft.isNotEmpty()) {
+        LocalCleanupDeleteDialog(
+            paths = selectedLeft.map { "${left.path}/$it" },
+            onConfirm = {
+                viewModel.deleteSelectedLocal()
+                localDeleteConfirm = false
+            },
+            onDismiss = { localDeleteConfirm = false },
+        )
+    }
+
     search?.let { s ->
         LocalSearchDialog(
             state = s,
@@ -394,6 +433,8 @@ private fun BrowserPane(
     onUploadSelection: () -> Unit,
     onMoveSelection: () -> Unit,
     onDeleteSelection: () -> Unit,
+    /** AI 清理入口(仅本地栏传入;null 不显示) */
+    onAiCleanup: (() -> Unit)?,
     onCancelSelection: () -> Unit,
     onRecheckStorage: () -> Unit,
     modifier: Modifier = Modifier,
@@ -555,14 +596,19 @@ private fun BrowserPane(
             if (selectionMode) {
                 Spacer(Modifier.weight(1f))
                 when (side) {
-                    Side.LEFT -> Button(
-                        onClick = onUploadSelection,
-                        enabled = selected.isNotEmpty(),
-                        modifier = Modifier.padding(end = 10.dp),
-                    ) {
-                        Icon(Icons.Filled.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("上传")
+                    Side.LEFT -> {
+                        Button(onClick = onUploadSelection, enabled = selected.isNotEmpty()) {
+                            Icon(Icons.Filled.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("上传")
+                        }
+                        TextButton(
+                            onClick = onDeleteSelection,
+                            enabled = selected.isNotEmpty(),
+                            modifier = Modifier.padding(end = 10.dp),
+                        ) {
+                            Text("删除", color = MaterialTheme.colorScheme.error)
+                        }
                     }
 
                     Side.RIGHT -> {
@@ -583,6 +629,13 @@ private fun BrowserPane(
                     Icon(Icons.Filled.CreateNewFolder, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("新建文件夹", style = MaterialTheme.typography.labelMedium)
+                }
+                onAiCleanup?.let { cleanup ->
+                    TextButton(onClick = cleanup) {
+                        Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("AI 清理", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
                 Spacer(Modifier.weight(1f))
                 val dirs = state.entries.count { it.isDir }
@@ -1144,6 +1197,110 @@ private fun DeleteConfirmDialog(paths: List<String>, onConfirm: () -> Unit, onDi
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
         },
+    )
+}
+
+/** AI 清理建议(P2):列出建议清理项+理由,勾选后预选进左栏多选;只建议,不自动删 */
+@Composable
+private fun CleanupSuggestionDialog(
+    suggestions: List<CleanupItem>,
+    loading: Boolean,
+    error: String?,
+    onApply: (List<String>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var checked by remember(suggestions) { mutableStateOf(suggestions.map { it.name }.toSet()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("AI 清理建议") },
+        text = {
+            Column {
+                when {
+                    loading -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("正在分析…", style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    error != null -> Text(
+                        error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+
+                    suggestions.isEmpty() -> Text("没有建议", style = MaterialTheme.typography.bodySmall)
+
+                    else -> {
+                        Text(
+                            "AI 认为以下 ${suggestions.size} 项可清理（只建议，不会自动删除）：",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        LazyColumn(Modifier.height(260.dp)) {
+                            items(suggestions, key = { it.name }) { item ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(
+                                        checked = item.name in checked,
+                                        onCheckedChange = { c ->
+                                            checked = if (c) checked + item.name else checked - item.name
+                                        },
+                                    )
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            item.name,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (item.reason.isNotBlank()) {
+                                            Text(
+                                                item.reason,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onApply(checked.toList()) },
+                enabled = !loading && suggestions.isNotEmpty() && checked.isNotEmpty(),
+            ) { Text("选中这 ${checked.size} 项") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
+}
+
+/** 本地「删除」硬确认:明示是软删除(移入 .misc-trash,可移回),非永久删除 */
+@Composable
+private fun LocalCleanupDeleteDialog(paths: List<String>, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("移入回收站") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("将把 ${paths.size} 项移入 .misc-trash（软删除，可移回；不会立即释放空间）：")
+                Text(
+                    paths.joinToString("\n"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 6,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("移入回收站", color = MaterialTheme.colorScheme.error) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
 

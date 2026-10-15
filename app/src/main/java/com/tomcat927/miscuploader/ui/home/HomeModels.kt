@@ -12,6 +12,9 @@ data class FileItem(
     val mtimeMs: Long? = null,
 )
 
+/** AI 清理建议的单条(仅建议;删除由用户确认后走软删除) */
+data class CleanupItem(val name: String, val reason: String)
+
 /** 单侧浏览器状态 */
 data class BrowserState(
     val path: String,
