@@ -96,6 +96,8 @@ V1.1 候选（未实现）：R8 混淆、Room DAO 测试、热更新下载改 Wo
 - **只建议不执行**：AI 仅用于辅助判断，不会自动上传或删除任何文件；删除永远需要你手动确认
 - 想避免数据出私域：可把视觉模型部署在自有服务器，暴露 OpenAI 兼容接口给 App 使用
 
+> 完整的分步操作与排障（含「验证多模态」400 排查）：见 **[AI-ASSISTANT.md](AI-ASSISTANT.md)**
+
 ## 构建
 
 本机零环境：构建/签名/发布全部在 GitHub Actions。push 到 master 即自动构建并发布 Release（`v{version}-{buildtime}`），保留最近 10 个。签名 keystore 走 Actions secrets（`ANDROID_KEYSTORE_BASE64` 等），未配置时使用 debug 签名（可装可测，与正式签名版不能互相覆盖安装）。
