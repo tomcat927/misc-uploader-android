@@ -109,4 +109,41 @@ class AiClientTest {
             assertTrue(e.message!!.contains("choices"))
         }
     }
+
+    @Test
+    fun `null content falls back to reasoning_content`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"choices":[{"message":{"role":"assistant","content":null,"reasoning_content":"/图片/杂乱的图片"}}]}""",
+            ),
+        )
+        assertEquals("/图片/杂乱的图片", newClient().chatText("m", "hi"))
+    }
+
+    @Test
+    fun `absent content key falls back to reasoning_content`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"choices":[{"message":{"role":"assistant","reasoning_content":"/ai"}}]}""",
+            ),
+        )
+        assertEquals("/ai", newClient().chatText("m", "hi"))
+    }
+
+    @Test
+    fun `legacy choices text is accepted`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"choices":[{"text":"/docs"}]}"""))
+        assertEquals("/docs", newClient().chatText("m", "hi"))
+    }
+
+    @Test
+    fun `message without any text surfaces AiException`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"choices":[{"message":{"role":"assistant"}}]}"""))
+        try {
+            newClient().chatText("m", "hi")
+            fail("expected AiException")
+        } catch (e: AiException) {
+            assertTrue(e.message!!.contains("message.content"))
+        }
+    }
 }

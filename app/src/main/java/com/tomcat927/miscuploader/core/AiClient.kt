@@ -6,6 +6,8 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
@@ -123,7 +125,8 @@ class AiClient(
         val payload = buildJsonObject {
             put("model", model)
             put("messages", messages)
-            put("max_tokens", 1024)
+            // 推理模型把「思考」也算进 max_tokens:额度太小会思考占满、content 为空(实测踩过)
+            put("max_tokens", MAX_TOKENS)
         }
         val req = Request.Builder()
             .url("$baseUrl/chat/completions")
@@ -134,16 +137,37 @@ class AiClient(
         val root = runCatching { json.parseToJsonElement(body).jsonObject }
             .getOrElse { throw AiException("响应不是 JSON：${body.take(200)}") }
         val choices = root["choices"]?.jsonArray ?: throw AiException("响应缺少 choices")
-        val contentEl = choices.firstOrNull()?.jsonObject?.get("message")?.jsonObject?.get("content")
-            ?: throw AiException("响应缺少 message.content")
-        return when (contentEl) {
-            is JsonPrimitive -> contentEl.contentOrNull ?: contentEl.toString()
-            // 少数实现把 content 拆成多段 [{type:text,text}],拼接
-            is JsonArray -> contentEl.joinToString("") { el ->
-                (el as? JsonObject)?.get("text")?.jsonPrimitive?.contentOrNull ?: ""
-            }
-            else -> contentEl.toString()
+        val choice = choices.firstOrNull()?.jsonObject
+        val message = choice?.get("message")?.jsonObject
+        val text = message?.let { messageText(it) }
+            ?: choice?.get("text")?.jsonPrimitive?.contentOrNull // 兼容 legacy completions 的 choices[].text
+        if (text.isNullOrBlank()) {
+            debugLog?.invoke("ai: 响应无可用文本（前 400 字符）：${body.take(400)}")
+            throw AiException(if (message == null) "响应缺少 message" else "响应缺少 message.content")
         }
+        return text
+    }
+
+    /**
+     * 取 message 的文本:优先 content;缺失/空白时回落到 reasoning_content。
+     * 推理模型(max_tokens 被思考吃满)会只回思考、content 为空,直接抛错会白跑一次分析。
+     */
+    private fun messageText(message: JsonObject): String? {
+        val direct = textOf(message["content"])
+        if (!direct.isNullOrBlank()) return direct
+        return textOf(message["reasoning_content"])?.takeIf { it.isNotBlank() }
+            ?: textOf(message["reasoning"])?.takeIf { it.isNotBlank() }
+    }
+
+    /** content 可能是字符串、null、或多段 [{type:text,text}] */
+    private fun textOf(el: JsonElement?): String? = when (el) {
+        null, is JsonNull -> null
+        is JsonPrimitive -> el.contentOrNull ?: el.toString()
+        is JsonArray -> el.joinToString("") { child ->
+            (child as? JsonObject)?.get("text")?.jsonPrimitive?.contentOrNull ?: ""
+        }.ifBlank { null }
+
+        else -> el.toString()
     }
 
     private suspend fun execute(request: Request): String = withContext(Dispatchers.IO) {
@@ -168,6 +192,9 @@ class AiClient(
 
     companion object {
         private val JSON_MEDIA = "application/json".toMediaType()
+
+        /** 回复 token 上限:要留够推理模型的思考空间(思考也算 token) */
+        private const val MAX_TOKENS = 4096
 
         /**
          * 探针用 64×64 纯红 PNG(RGBA, 332 字符)。

@@ -3,6 +3,7 @@ package com.tomcat927.miscuploader.core
 import java.io.File
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -247,6 +248,9 @@ class OpenListClient(
                 text
             }
         } catch (e: OpenListApiException) {
+            throw e
+        } catch (e: CancellationException) {
+            // 协程取消不是网络错误:原样抛出(否则日志刷「请求异常 JobCancellationException」且破坏取消语义)
             throw e
         } catch (e: Exception) {
             debugLog?.invoke("请求异常 ${request.method} ${request.url.encodedPath}：${e.javaClass.simpleName}：${e.message}")

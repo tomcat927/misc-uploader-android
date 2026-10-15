@@ -108,6 +108,10 @@
 
 **后台继续实测**: ① 分析中点空白处 → 弹框关、底栏转圈,完成后弹「建议已就绪」且按钮变「AI 归档 · 建议就绪」→ 再点直接看到结果(不再重新分析);② 点「取消分析」→ 立即停止(日志「归档分析已取消」);③ 分析中反复点按钮 → 不会重复请求
 
+**修复(2026-10-15,九)——`归档分析失败：响应缺少 message.content`(日志实证)**: 20:14 三次分析里两次失败(HTTP 200、4476/2336 字符但无 content)。**根因**: 推理模型(sensenova-6.8-flash-lite)把「思考」也算进 `max_tokens`,原来只给 **1024** → 思考占满额度、`content` 字段缺失/为空,而 `AiClient` 只认 `message.content`,直接抛错白跑。**修复**: ① `max_tokens` 1024 → **4096**;② 解析加回落链:`content` → `reasoning_content`(→ `reasoning`)→ legacy `choices[].text`,取不到才报错;③ 取不到时把**响应体前 400 字符写日志**(原来只有一句错误,无法定位);④ 抽 `textOf()` 兼容字符串/null/多段 `[{type,text}]`;⑤ 顺带修 `OpenListClient` 把 `CancellationException` 当网络异常记日志+包装的问题(改原样抛出,日志不再刷「请求异常 JobCancellationException」);⑥ `AiClientTest` 补 4 个用例(null/缺 content 回落 reasoning、legacy text、无文本报错)。
+
+**AI 解析实测**: ① 推理模型只回思考时也能拿到路径;② 真取不到时日志里有响应体片段可定位;③ 上传完成后日志不再出现 JobCancellationException「请求异常」
+
 ## 待办 — 开发队列(按推荐顺序)
 
 1. ~~A1 SHA-256 去重 + 上传历史~~ ✅ 2026-10-04: 内容级去重(同内容任意目录跳过+提示已有路径,PUT 前流式 hash/「校验中」状态)、Room upload_history(sha→最新落点,上限一万自动修剪)、队列页「历史」chip;DB v1→v2 Migration;**顺带修 M3 队列排序 bug(partition 解构颠倒)**——真机实测见下节
