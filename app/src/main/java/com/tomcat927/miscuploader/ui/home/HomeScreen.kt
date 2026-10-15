@@ -1,8 +1,12 @@
 package com.tomcat927.miscuploader.ui.home
 
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -191,6 +195,10 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onMoveSelection = {},
                 onDeleteSelection = {},
                 onCancelSelection = viewModel::clearSelection,
+                onRecheckStorage = {
+                    viewModel.recheckStoragePermission()
+                    viewModel.refresh(Side.LEFT)
+                },
                 modifier = Modifier.weight(leftWeight).fillMaxHeight(),
             )
 
@@ -239,6 +247,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onMoveSelection = { remoteMovePicker = true },
                 onDeleteSelection = { remoteDeleteConfirm = true },
                 onCancelSelection = viewModel::clearSelectionRight,
+                onRecheckStorage = {},
                 modifier = Modifier.weight(rightWeight).fillMaxHeight(),
             )
         }
@@ -386,6 +395,7 @@ private fun BrowserPane(
     onMoveSelection: () -> Unit,
     onDeleteSelection: () -> Unit,
     onCancelSelection: () -> Unit,
+    onRecheckStorage: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val accent = if (isFocused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -531,7 +541,7 @@ private fun BrowserPane(
             }
 
             if (side == Side.LEFT && !storageGranted) {
-                StoragePermissionCard(Modifier.align(Alignment.Center))
+                StoragePermissionCard(Modifier.align(Alignment.Center), onRecheck = onRecheckStorage)
             }
         }
 
@@ -846,27 +856,41 @@ private fun BreadcrumbRow(segments: List<String>, onNavigate: (Int) -> Unit) {
 }
 
 @Composable
-private fun StoragePermissionCard(modifier: Modifier = Modifier) {
+private fun StoragePermissionCard(modifier: Modifier = Modifier, onRecheck: () -> Unit) {
     val context = LocalContext.current
+    // R 以下用传统 READ_EXTERNAL_STORAGE 运行时请求(请求完回调 onRecheck 复检)
+    val legacyPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { onRecheck() }
     Card(modifier = modifier.padding(16.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("需要「所有文件访问」权限", style = MaterialTheme.typography.titleSmall)
+            Text(
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) "需要「所有文件访问」权限" else "需要「存储」权限",
+                style = MaterialTheme.typography.titleSmall,
+            )
             Text(
                 "浏览手机文件需要此权限；本应用只在你主动选择文件后上传。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            TextButton(onClick = {
-                val intents = listOf(
-                    Intent(
-                        Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                        Uri.parse("package:${context.packageName}"),
-                    ),
-                    Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
-                )
-                intents.firstOrNull { runCatching { context.startActivity(it) }.isSuccess }
-            }) {
-                Text("去授权")
+            Row {
+                TextButton(onClick = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        val intents = listOf(
+                            Intent(
+                                Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                                Uri.parse("package:${context.packageName}"),
+                            ),
+                            Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
+                        )
+                        intents.firstOrNull { runCatching { context.startActivity(it) }.isSuccess }
+                    } else {
+                        legacyPermLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+                    }
+                }) {
+                    Text("去授权")
+                }
+                TextButton(onClick = onRecheck) { Text("重检") }
             }
         }
     }

@@ -1,8 +1,11 @@
 package com.tomcat927.miscuploader.ui.home
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Environment
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tomcat927.miscuploader.core.AiClient
@@ -287,10 +290,16 @@ class HomeViewModel @Inject constructor(
 
     // ---- 权限 ----
 
-    /** 有「所有文件访问」权限;R 以下(minSdk 26~28)按传统权限处理,用户设备几乎全部 R+,失败由 listFiles 兜底 */
+    /** R+ 看「所有文件访问」;R 以下(26~28)看传统 READ_EXTERNAL_STORAGE(之前恒 false → 卡片永不消失) */
     fun recheckStoragePermission() {
-        _storageGranted.value =
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()
+        _storageGranted.value = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.READ_EXTERNAL_STORAGE,
+            ) == PackageManager.PERMISSION_GRANTED
+        }
     }
 
     /** 回到前台:复检「所有文件访问」;若刚从无到有则刷新左栏(修首次授权后卡片不消失) */
@@ -408,17 +417,21 @@ class HomeViewModel @Inject constructor(
                 }
                 return@launch
             }
-            val tasks = mutableListOf<UploadTask>()
-            selected.forEach { name ->
-                val f = File(joinPath(currentLocal, name))
-                when {
-                    f.isFile -> tasks += taskFor(f, name, mode, manualTarget)
-                    f.isDirectory -> f.walkTopDown()
-                        .filter { it.isFile }
-                        .forEach { child ->
-                            tasks += taskFor(child, child.path.removePrefix(currentLocal).trimStart('/'), mode, manualTarget)
-                        }
+            // 文件系统遍历放 IO(大目录 walkTopDown 在 Main 会卡 UI/ANR)
+            val tasks = withContext(Dispatchers.IO) {
+                val out = mutableListOf<UploadTask>()
+                selected.forEach { name ->
+                    val f = File(joinPath(currentLocal, name))
+                    when {
+                        f.isFile -> out += taskFor(f, name, mode, manualTarget)
+                        f.isDirectory -> f.walkTopDown()
+                            .filter { it.isFile }
+                            .forEach { child ->
+                                out += taskFor(child, child.path.removePrefix(currentLocal).trimStart('/'), mode, manualTarget)
+                            }
+                    }
                 }
+                out
             }
             if (tasks.isEmpty()) {
                 events.emit("没有可上传的文件")
@@ -714,17 +727,19 @@ class HomeViewModel @Inject constructor(
                     if (n > 0) closeSearch()
                     events.emit(if (n > 0) "已加入队列：$n 个文件" else "没有可上传的文件")
                 } else {
-                    val tasks = hits.map { hit ->
-                        val f = File(hit.path)
-                        UploadTask(
-                            file = f,
-                            remoteDir = if (mode == UploadMode.AUTO_DATE) {
-                                UploadPlanning.autoDirFor(f.lastModified())
-                            } else {
-                                UploadPlanning.normalizeDir(manualTarget)
-                            },
-                            rel = hit.name,
-                        )
+                    val tasks = withContext(Dispatchers.IO) {
+                        hits.map { hit ->
+                            val f = File(hit.path)
+                            UploadTask(
+                                file = f,
+                                remoteDir = if (mode == UploadMode.AUTO_DATE) {
+                                    UploadPlanning.autoDirFor(f.lastModified())
+                                } else {
+                                    UploadPlanning.normalizeDir(manualTarget)
+                                },
+                                rel = hit.name,
+                            )
+                        }
                     }
                     uploadRepository.enqueue(tasks)
                     closeSearch()

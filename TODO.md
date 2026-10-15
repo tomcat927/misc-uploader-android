@@ -70,6 +70,8 @@
 
 **顺带修复(2026-10-15)**: 首次「去授权」返回后左栏授权卡片不消失 → `HomeViewModel.onResumed()` + `HomeScreen` ON_RESUME 复检(刚授权则刷新左栏)
 
+**修复(2026-10-15,二)**: ① `uploadSelected`/`uploadSearchResults` 的文件夹遍历/建 task 移到 `Dispatchers.IO`(大目录不再卡 UI/ANR);② 存储权限:Manifest 补 `READ_EXTERNAL_STORAGE`(maxSdk 32),`recheckStoragePermission` R 以下改看该权限(之前恒 false),授权卡 R 以下走运行时请求并加「重检」
+
 ## 待办 — 开发队列(按推荐顺序)
 
 1. ~~A1 SHA-256 去重 + 上传历史~~ ✅ 2026-10-04: 内容级去重(同内容任意目录跳过+提示已有路径,PUT 前流式 hash/「校验中」状态)、Room upload_history(sha→最新落点,上限一万自动修剪)、队列页「历史」chip;DB v1→v2 Migration;**顺带修 M3 队列排序 bug(partition 解构颠倒)**——真机实测见下节
