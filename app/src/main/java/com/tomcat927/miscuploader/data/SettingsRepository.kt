@@ -45,6 +45,21 @@ data class ServerConfig(
     val password: String,
 )
 
+/** AI 助手已保存配置(密钥密文态) */
+data class AiStoredConfig(
+    val enabled: Boolean,
+    val baseUrl: String,
+    val model: String,
+    val hasApiKey: Boolean,
+)
+
+/** AI 助手解密后配置(model 可空——拉模型阶段尚未选) */
+data class AiServerConfig(
+    val baseUrl: String,
+    val apiKey: String,
+    val model: String,
+)
+
 /**
  * 设置持久化(拍板:对齐桌面端交互——无保存按钮,失焦即落盘;空服务器/用户名的保存直接拒绝;
  * 密码以 Keystore AES-GCM 密文存 DataStore,永不明文落盘)。
@@ -72,6 +87,10 @@ class SettingsRepository @Inject constructor(
         val UPLOAD_WIFI_ONLY = booleanPreferencesKey("upload_wifi_only")
         val DEFAULT_SHARE_DIR = stringPreferencesKey("default_share_dir")
         val QUEUE_PAUSED = booleanPreferencesKey("queue_paused")
+        val AI_ENABLED = booleanPreferencesKey("ai_enabled")
+        val AI_BASE_URL = stringPreferencesKey("ai_base_url")
+        val AI_MODEL = stringPreferencesKey("ai_model")
+        val AI_API_KEY_CIPHER = stringPreferencesKey("ai_api_key_cipher")
     }
 
     /** 上传模式流(默认手动) */
@@ -248,6 +267,72 @@ class SettingsRepository @Inject constructor(
         context.dataStore.edit { prefs ->
             prefs[Keys.QUEUE_PAUSED] = paused
         }
+    }
+
+    // ---- AI 助手(OpenAI 兼容;拍板:默认关,只建议不执行,密钥 Keystore 加密同密码) ----
+
+    /** AI 助手总开关(默认关:未启用不联网、不外发任何内容) */
+    val aiEnabledFlow: Flow<Boolean> = context.dataStore.data.map { prefs ->
+        prefs[Keys.AI_ENABLED] ?: false
+    }
+
+    suspend fun saveAiEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.AI_ENABLED] = enabled
+        }
+    }
+
+    /** AI 助手密文态配置(密钥不经过此流) */
+    val aiStoredConfigFlow: Flow<AiStoredConfig> = context.dataStore.data.map { prefs ->
+        AiStoredConfig(
+            enabled = prefs[Keys.AI_ENABLED] ?: false,
+            baseUrl = prefs[Keys.AI_BASE_URL].orEmpty(),
+            model = prefs[Keys.AI_MODEL].orEmpty(),
+            hasApiKey = !prefs[Keys.AI_API_KEY_CIPHER].isNullOrEmpty(),
+        )
+    }
+
+    /**
+     * 保存 AI 配置(失焦即存)。
+     * @param apiKey null = 沿用已存密钥;空串 = 清除已存密钥
+     * @return false = 地址为空,拒绝落盘
+     */
+    suspend fun saveAiConfig(baseUrl: String, apiKey: String?, model: String): Boolean {
+        val url = baseUrl.trim()
+        if (url.isEmpty()) return false
+        context.dataStore.edit { prefs ->
+            prefs[Keys.AI_BASE_URL] = url
+            prefs[Keys.AI_MODEL] = model.trim()
+            if (apiKey != null && apiKey.isNotEmpty()) {
+                prefs[Keys.AI_API_KEY_CIPHER] = crypto.encrypt(apiKey)
+            } else if (apiKey?.isEmpty() == true) {
+                prefs.remove(Keys.AI_API_KEY_CIPHER)
+            }
+        }
+        return true
+    }
+
+    suspend fun saveAiModel(model: String) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.AI_MODEL] = model.trim()
+        }
+    }
+
+    /** 解密后的 AI 配置;地址或密钥缺失 = 不可用,返回 null */
+    suspend fun loadAiDecryptedOnce(): AiServerConfig? {
+        val prefs = context.dataStore.data.first()
+        val url = prefs[Keys.AI_BASE_URL].orEmpty()
+        val cipher = prefs[Keys.AI_API_KEY_CIPHER] ?: return null
+        if (url.isEmpty()) return null
+        return runCatching {
+            AiServerConfig(url, crypto.decrypt(cipher), prefs[Keys.AI_MODEL].orEmpty())
+        }.getOrNull()
+    }
+
+    /** 「显示」按钮:取回真实 API Key */
+    suspend fun revealAiApiKey(): String? {
+        val cipher = context.dataStore.data.first()[Keys.AI_API_KEY_CIPHER] ?: return null
+        return runCatching { crypto.decrypt(cipher) }.getOrNull()
     }
 
     /** 密文态配置流(密码不经过此流) */

@@ -3,6 +3,7 @@ package com.tomcat927.miscuploader.ui.settings
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tomcat927.miscuploader.core.AiClient
 import com.tomcat927.miscuploader.data.AppLogger
 import com.tomcat927.miscuploader.data.ConnectionManager
 import com.tomcat927.miscuploader.data.ServerConfig
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 
 data class DiagnosticsUiState(
     val expanded: Boolean = false,
@@ -44,6 +46,18 @@ data class SettingsUiState(
     val pigalleryBase: String = "",
     /** 分享接收目标目录(手动模式,拍板 2026-10-04;默认仓库根) */
     val defaultShareDir: String = "",
+    // ---- AI 助手(拍板:默认关;密钥掩码回显同密码语义) ----
+    val aiEnabled: Boolean = false,
+    val aiBaseUrl: String = "",
+    val aiApiKeyInput: String = "",
+    val aiHasApiKey: Boolean = false,
+    val aiRevealing: Boolean = false,
+    val aiModel: String = "",
+    val aiModels: List<String> = emptyList(),
+    val aiLoadingModels: Boolean = false,
+    val aiTesting: Boolean = false,
+    val aiStatus: String? = null,
+    val aiVisionOk: Boolean? = null,
     val diagnostics: DiagnosticsUiState = DiagnosticsUiState(),
 )
 
@@ -53,6 +67,7 @@ class SettingsViewModel @Inject constructor(
     private val settings: SettingsRepository,
     private val connection: ConnectionManager,
     private val logger: AppLogger,
+    private val okHttpClient: OkHttpClient,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(SettingsUiState())
@@ -100,6 +115,18 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             val dir = settings.loadDefaultShareDirOnce()
             _uiState.update { it.copy(defaultShareDir = dir) }
+        }
+        viewModelScope.launch {
+            val ai = settings.aiStoredConfigFlow.first()
+            _uiState.update {
+                it.copy(
+                    aiEnabled = ai.enabled,
+                    aiBaseUrl = ai.baseUrl,
+                    aiModel = ai.model,
+                    aiHasApiKey = ai.hasApiKey,
+                    aiApiKeyInput = if (ai.hasApiKey) SettingsRepository.PASSWORD_MASK else "",
+                )
+            }
         }
     }
 
@@ -261,6 +288,124 @@ class SettingsViewModel @Inject constructor(
         shareDirDirty = false
         viewModelScope.launch { settings.saveDefaultShareDir(_uiState.value.defaultShareDir) }
     }
+
+    // ---- AI 助手(OpenAI 兼容;拍板:只建议不执行,默认关;密钥掩码回显同密码) ----
+
+    private var aiDirty = false
+
+    fun onAiBaseUrlChange(value: String) {
+        aiDirty = true
+        _uiState.update { it.copy(aiBaseUrl = value, aiStatus = null) }
+    }
+
+    fun onAiApiKeyChange(value: String) {
+        aiDirty = true
+        _uiState.update { it.copy(aiApiKeyInput = value, aiStatus = null) }
+    }
+
+    fun onAiModelChange(value: String) {
+        aiDirty = true
+        _uiState.update { it.copy(aiModel = value) }
+    }
+
+    fun commitAi() {
+        if (!aiDirty) return
+        aiDirty = false
+        viewModelScope.launch { persistAi() }
+    }
+
+    /** 落盘(掩码哨兵或空 = 沿用已存密钥);返回 false = 地址为空被拒 */
+    private suspend fun persistAi(): Boolean {
+        val s = _uiState.value
+        val key = s.aiApiKeyInput.takeUnless { it.isEmpty() || it == SettingsRepository.PASSWORD_MASK }
+        return settings.saveAiConfig(s.aiBaseUrl, key, s.aiModel)
+    }
+
+    fun setAiEnabled(enabled: Boolean) {
+        _uiState.update { it.copy(aiEnabled = enabled) }
+        viewModelScope.launch { settings.saveAiEnabled(enabled) }
+    }
+
+    fun toggleAiReveal() {
+        val s = _uiState.value
+        if (!s.aiRevealing) {
+            if (!s.aiHasApiKey) return
+            viewModelScope.launch {
+                val real = settings.revealAiApiKey()
+                if (real != null) _uiState.update { it.copy(aiRevealing = true, aiApiKeyInput = real) }
+            }
+        } else {
+            _uiState.update { it.copy(aiRevealing = false, aiApiKeyInput = SettingsRepository.PASSWORD_MASK) }
+        }
+    }
+
+    /** 「获取模型」:先落盘(拿到密钥)再 GET /models */
+    fun fetchAiModels() {
+        viewModelScope.launch {
+            if (!persistAi()) {
+                _uiState.update { it.copy(aiStatus = "请先填写接口地址") }
+                return@launch
+            }
+            aiDirty = false
+            _uiState.update { it.copy(aiLoadingModels = true, aiStatus = null) }
+            val cfg = settings.loadAiDecryptedOnce()
+            if (cfg == null) {
+                _uiState.update { it.copy(aiLoadingModels = false, aiStatus = "缺少 API Key，无法获取模型") }
+                return@launch
+            }
+            runCatching { aiClient(cfg.baseUrl, cfg.apiKey).listModels() }
+                .onSuccess { models ->
+                    _uiState.update {
+                        it.copy(aiLoadingModels = false, aiModels = models, aiStatus = "获取到 ${models.size} 个模型")
+                    }
+                }
+                .onFailure { e ->
+                    _uiState.update {
+                        it.copy(aiLoadingModels = false, aiModels = emptyList(), aiStatus = e.message ?: e.javaClass.simpleName)
+                    }
+                }
+        }
+    }
+
+    fun selectAiModel(model: String) {
+        aiDirty = false
+        _uiState.update { it.copy(aiModel = model) }
+        viewModelScope.launch { settings.saveAiModel(model) }
+    }
+
+    /** 「验证多模态」:发探针图,确认所选模型能处理图片 */
+    fun verifyAiVision() {
+        viewModelScope.launch {
+            if (!persistAi()) {
+                _uiState.update { it.copy(aiStatus = "请先填写接口地址") }
+                return@launch
+            }
+            aiDirty = false
+            val model = _uiState.value.aiModel.trim()
+            if (model.isEmpty()) {
+                _uiState.update { it.copy(aiStatus = "请先选择模型") }
+                return@launch
+            }
+            val cfg = settings.loadAiDecryptedOnce()
+            if (cfg == null) {
+                _uiState.update { it.copy(aiStatus = "缺少 API Key，无法验证") }
+                return@launch
+            }
+            _uiState.update { it.copy(aiTesting = true, aiStatus = null, aiVisionOk = null) }
+            runCatching { aiClient(cfg.baseUrl, cfg.apiKey).verifyVision(model) }
+                .onSuccess {
+                    _uiState.update { it.copy(aiTesting = false, aiVisionOk = true, aiStatus = "该模型可处理图片 ✓") }
+                }
+                .onFailure { e ->
+                    _uiState.update {
+                        it.copy(aiTesting = false, aiVisionOk = false, aiStatus = "验证失败：${e.message ?: e.javaClass.simpleName}")
+                    }
+                }
+        }
+    }
+
+    private fun aiClient(baseUrl: String, apiKey: String): AiClient =
+        AiClient(baseUrl, apiKey, okHttpClient) { logger.log("ai", it) }
 
     // ---- 诊断(M4:零本地环境下的排查窗口) ----
 

@@ -202,6 +202,29 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 onShareDirCommit = viewModel::commitShareDir,
             )
 
+            AiAssistantCard(
+                enabled = state.aiEnabled,
+                baseUrl = state.aiBaseUrl,
+                apiKeyInput = state.aiApiKeyInput,
+                hasApiKey = state.aiHasApiKey,
+                revealing = state.aiRevealing,
+                model = state.aiModel,
+                models = state.aiModels,
+                loadingModels = state.aiLoadingModels,
+                testing = state.aiTesting,
+                status = state.aiStatus,
+                visionOk = state.aiVisionOk,
+                onEnabledChange = viewModel::setAiEnabled,
+                onBaseUrlChange = viewModel::onAiBaseUrlChange,
+                onApiKeyChange = viewModel::onAiApiKeyChange,
+                onReveal = viewModel::toggleAiReveal,
+                onCommit = viewModel::commitAi,
+                onModelChange = viewModel::onAiModelChange,
+                onSelectModel = viewModel::selectAiModel,
+                onFetchModels = viewModel::fetchAiModels,
+                onVerifyVision = viewModel::verifyAiVision,
+            )
+
             DiagnosticsCard(
                 state = state.diagnostics,
                 onToggle = viewModel::toggleDiagnostics,
@@ -466,7 +489,7 @@ private fun UploadModeCard(mode: UploadMode, onSelect: (UploadMode) -> Unit) {  
  * 焦点跟踪挂在包裹的 FocusGroup 上:组内任一字段获得过焦点又整体失去时提交一次。
  */
 @Composable
-private fun CommitOnFocusLost(onCommit: () -> Unit, content: @Composable () -> Unit) {
+internal fun CommitOnFocusLost(onCommit: () -> Unit, content: @Composable () -> Unit) {
     var hadFocus by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier.onFocusChanged { state ->
