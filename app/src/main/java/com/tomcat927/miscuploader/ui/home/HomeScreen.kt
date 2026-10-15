@@ -64,6 +64,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -78,6 +79,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tomcat927.miscuploader.core.GalleryLink
 import com.tomcat927.miscuploader.data.UploadMode
@@ -109,6 +113,9 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val searchSelection by viewModel.searchSelection.collectAsState()
     val searchHistory by viewModel.searchHistory.collectAsState()
     val viewerRequest by viewModel.viewerRequest.collectAsState()
+    val aiSuggestion by viewModel.aiSuggestion.collectAsState()
+    val aiSuggesting by viewModel.aiSuggesting.collectAsState()
+    val aiSuggestError by viewModel.aiSuggestError.collectAsState()
     val context = LocalContext.current
     val galleryUrl = GalleryLink.forDir(pigalleryBase, right.path)
     val snackbarHostState = remember { SnackbarHostState() }
@@ -119,6 +126,16 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { snackbarHostState.showSnackbar(it) }
+    }
+
+    // 回到前台复检存储权限(修:首次「去授权」后卡片不消失——去授权返回时 Activity 走 ON_RESUME)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) viewModel.onResumed()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val leftWeight by animateFloatAsState(
@@ -170,7 +187,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onOpenFile = { viewModel.openFile(Side.LEFT, it) },
                 onItemLongPress = viewModel::onItemLongPress,
                 onItemToggleSelect = viewModel::toggleSelect,
-                onUploadSelection = { uploadConfirm = true },
+                onUploadSelection = { viewModel.clearSuggestion(); uploadConfirm = true },
                 onMoveSelection = {},
                 onDeleteSelection = {},
                 onCancelSelection = viewModel::clearSelection,
@@ -291,19 +308,22 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     }
 
     if (uploadConfirm && selectedLeft.isNotEmpty()) {
-        val autoMode = uploadMode == UploadMode.AUTO_DATE
         UploadConfirmDialog(
             count = selectedLeft.size,
-            targetDesc = if (autoMode) {
-                "auto/年/月（按各文件修改时间自动归类）"
-            } else {
-                viewModel.breadcrumbOf(Side.RIGHT, right.path).joinToString("/")
-            },
-            onConfirm = {
-                viewModel.uploadSelected()
+            autoMode = uploadMode == UploadMode.AUTO_DATE,
+            manualTargetDesc = viewModel.breadcrumbOf(Side.RIGHT, right.path).joinToString("/"),
+            suggestion = aiSuggestion,
+            suggesting = aiSuggesting,
+            suggestError = aiSuggestError,
+            onSuggest = viewModel::requestUploadSuggestion,
+            onConfirm = { override ->
+                viewModel.uploadSelected(override)
                 uploadConfirm = false
             },
-            onDismiss = { uploadConfirm = false },
+            onDismiss = {
+                uploadConfirm = false
+                viewModel.clearSuggestion()
+            },
         )
     }
 
@@ -894,15 +914,68 @@ private fun MkdirDialog(onConfirm: (String) -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun UploadConfirmDialog(count: Int, targetDesc: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+private fun UploadConfirmDialog(
+    count: Int,
+    autoMode: Boolean,
+    manualTargetDesc: String,
+    suggestion: String?,
+    suggesting: Boolean,
+    suggestError: String?,
+    onSuggest: () -> Unit,
+    onConfirm: (String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // 建议变化时重置"采用"勾选(避免沿用上一条建议的状态)
+    var useSuggestion by remember(suggestion) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("上传") },
         text = {
-            Text("已选择 $count 个文件（文件夹按内部结构展开），将上传到：\n$targetDesc")
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("已选择 $count 个文件（文件夹按内部结构展开），将上传到：")
+                Text(
+                    when {
+                        autoMode -> "auto/年/月（按各文件修改时间自动归类）"
+                        useSuggestion && suggestion != null -> suggestion
+                        else -> manualTargetDesc
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                if (!autoMode) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = onSuggest, enabled = !suggesting) {
+                            Text(if (suggesting) "分析中…" else "AI 建议落点")
+                        }
+                        if (suggesting) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        }
+                    }
+                    suggestion?.let { dir ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = useSuggestion, onCheckedChange = { useSuggestion = it })
+                            Column(Modifier.weight(1f)) {
+                                Text("AI 建议：$dir", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    "勾选即改用此目录",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    suggestError?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                }
+            }
         },
         confirmButton = {
-            TextButton(onClick = onConfirm) { Text("执行上传") }
+            TextButton(onClick = { onConfirm(if (useSuggestion) suggestion else null) }) { Text("执行上传") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }

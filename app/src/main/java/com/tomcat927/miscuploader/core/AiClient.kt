@@ -75,12 +75,11 @@ class AiClient(
         return chat(model, messages)
     }
 
-    /** 多模态对话:文本 + 单张图片(base64,data URI 内联) */
+    /** 多模态对话:文本 + 若干张图片(base64,data URI 内联) */
     suspend fun chatVision(
         model: String,
         userText: String,
-        imageBase64: String,
-        mime: String,
+        images: List<AiImage>,
         systemPrompt: String? = null,
     ): String {
         val messages = buildJsonArray {
@@ -92,12 +91,17 @@ class AiClient(
                         "content",
                         buildJsonArray {
                             add(buildJsonObject { put("type", "text"); put("text", userText) })
-                            add(
-                                buildJsonObject {
-                                    put("type", "image_url")
-                                    put("image_url", buildJsonObject { put("url", "data:$mime;base64,$imageBase64") })
-                                },
-                            )
+                            images.forEach { img ->
+                                add(
+                                    buildJsonObject {
+                                        put("type", "image_url")
+                                        put(
+                                            "image_url",
+                                            buildJsonObject { put("url", "data:${img.mime};base64,${img.base64}") },
+                                        )
+                                    },
+                                )
+                            }
                         },
                     )
                 },
@@ -108,7 +112,7 @@ class AiClient(
 
     /** 多模态能力探针:发一张 1×1 图,能拿到文本回复即视为该模型接受图片输入 */
     suspend fun verifyVision(model: String): String =
-        chatVision(model, PROBE_PROMPT, PROBE_PNG_BASE64, "image/png")
+        chatVision(model, PROBE_PROMPT, listOf(AiImage(PROBE_PNG_BASE64, "image/png")))
 
     // ---- 内部 ----
 

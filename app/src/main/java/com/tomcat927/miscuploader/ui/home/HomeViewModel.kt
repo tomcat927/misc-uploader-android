@@ -5,7 +5,10 @@ import android.os.Build
 import android.os.Environment
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.tomcat927.miscuploader.core.AiClient
+import com.tomcat927.miscuploader.core.ImageThumb
 import com.tomcat927.miscuploader.core.OpenListApiException
+import com.tomcat927.miscuploader.data.AiSuggest
 import com.tomcat927.miscuploader.data.ConnectionManager
 import com.tomcat927.miscuploader.data.RootEntry
 import com.tomcat927.miscuploader.data.RootShell
@@ -36,10 +39,12 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 
 /**
  * 双栏主页面(拍板:左=本地,右=远程;交互借 SplitLanzou——触摸聚焦、展开动画、非聚焦侧两列)。
@@ -51,6 +56,7 @@ class HomeViewModel @Inject constructor(
     private val rootShell: RootShell,
     private val uploadRepository: UploadRepository,
     private val settings: SettingsRepository,
+    private val okHttpClient: OkHttpClient,
 ) : ViewModel() {
 
     private val localRoot: String = Environment.getExternalStorageDirectory().absolutePath
@@ -287,6 +293,13 @@ class HomeViewModel @Inject constructor(
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && Environment.isExternalStorageManager()
     }
 
+    /** 回到前台:复检「所有文件访问」;若刚从无到有则刷新左栏(修首次授权后卡片不消失) */
+    fun onResumed() {
+        val before = _storageGranted.value
+        recheckStoragePermission()
+        if (!before && _storageGranted.value) refresh(Side.LEFT)
+    }
+
     // ---- 双栏交互 ----
 
     fun focus(side: Side) {
@@ -356,12 +369,12 @@ class HomeViewModel @Inject constructor(
     }
 
     /** 上传已选项(拍板 A2:手动模式 → 远程当前目录;自动模式 → 按各文件 mtime 归 auto/yyyy/MM) */
-    fun uploadSelected() {
+    fun uploadSelected(targetOverride: String? = null) {
         val selected = _selectedLeft.value
         if (selected.isEmpty()) return
         viewModelScope.launch {
             val mode = settings.loadUploadModeOnce()
-            val manualTarget = _right.value.path
+            val manualTarget = targetOverride?.let { UploadPlanning.normalizeDir(it) } ?: _right.value.path
             val currentLocal = _left.value.path
             if (_left.value.viaRoot) {
                 // root 桥入队(拍板 2026-10-05):su 拷缓存后走统一入队,归类语义与普通路径一致
@@ -427,6 +440,70 @@ class HomeViewModel @Inject constructor(
             },
             rel = rel,
         )
+
+    // ---- AI 落点建议(P1;拍板:只建议不执行,用户在确认框勾选才采用) ----
+
+    private val _suggestion = MutableStateFlow<String?>(null)
+    val aiSuggestion: StateFlow<String?> = _suggestion.asStateFlow()
+
+    private val _suggesting = MutableStateFlow(false)
+    val aiSuggesting: StateFlow<Boolean> = _suggesting.asStateFlow()
+
+    private val _suggestError = MutableStateFlow<String?>(null)
+    val aiSuggestError: StateFlow<String?> = _suggestError.asStateFlow()
+
+    fun clearSuggestion() {
+        _suggestion.value = null
+        _suggestError.value = null
+        _suggesting.value = false
+    }
+
+    /** 请 AI 给已选文件建议落点(文本 + 图片缩略图,最多 MAX_SUGGEST_IMAGES 张);失败只记错误不中断 */
+    fun requestUploadSuggestion() {
+        val selected = _selectedLeft.value
+        if (selected.isEmpty()) return
+        viewModelScope.launch {
+            _suggesting.value = true
+            _suggestion.value = null
+            _suggestError.value = null
+            try {
+                if (!settings.aiStoredConfigFlow.first().enabled) {
+                    throw IllegalStateException("AI 助手未启用（设置 → AI 助手）")
+                }
+                val cfg = settings.loadAiDecryptedOnce()
+                    ?: throw IllegalStateException("未配置 AI 助手（设置 → AI 助手）")
+                if (cfg.model.isBlank()) throw IllegalStateException("未选择 AI 模型（设置 → AI 助手）")
+                val client = connection.clientOrNull()
+                    ?: throw IllegalStateException("未连接——请到「设置」连接服务器")
+                val localDir = _left.value.path
+                val names = selected.toList()
+                val existingDirs = runCatching {
+                    client.list("/").filter { it.isDir }.map { it.name }.sorted()
+                }.getOrDefault(emptyList())
+                val images = withContext(Dispatchers.IO) {
+                    names.asSequence()
+                        .filter { FileKind.of(it) == FileKind.IMAGE }
+                        .mapNotNull { ImageThumb.encode(File(joinPath(localDir, it))) }
+                        .take(MAX_SUGGEST_IMAGES)
+                        .toList()
+                }
+                val ai = AiClient(cfg.baseUrl, cfg.apiKey, okHttpClient)
+                val prompt = AiSuggest.prompt(existingDirs, _right.value.path, names)
+                val raw = if (images.isEmpty()) {
+                    ai.chatText(cfg.model, prompt, AiSuggest.SYSTEM_PROMPT)
+                } else {
+                    ai.chatVision(cfg.model, prompt, images, AiSuggest.SYSTEM_PROMPT)
+                }
+                _suggestion.value = AiSuggest.parseDir(raw, _right.value.path)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _suggestError.value = e.message ?: e.javaClass.simpleName
+            } finally {
+                _suggesting.value = false
+            }
+        }
+    }
 
     // ---- 文件查看(拍板 2026-10-04:图片/文本内置,其余委托系统;先于 A1) ----
 
@@ -876,6 +953,9 @@ class HomeViewModel @Inject constructor(
     private fun joinPath(path: String, name: String): String = "$path/$name"
 
     companion object {
+        /** AI 落点建议最多附带的图片张数(控体积/成本/隐私) */
+        private const val MAX_SUGGEST_IMAGES = 4
+
         private val ITEM_ORDER =
             compareByDescending<FileItem> { it.isDir }.thenBy { it.name.lowercase() }
     }

@@ -68,6 +68,7 @@
 | 分发 | 侧载：GitHub Release APK；不上架 |
 | M0 裁剪 | minify=false、lintVital 关（质量门 = compile + unit test）；混淆规则随 V1.1 去重一起补 |
 | AI 助手（P0，2026-10-15 拍板） | 接入 **OpenAI 兼容**接口辅助文件归类/清理。**P0（本次）**=设置页「AI 助手」卡：接口地址（含 `/v1`）+ API Key（Keystore 加密、掩码回显同密码语义）+ 拉模型（`GET /models`）+ 选模型 + **探针验证多模态**（1×1 PNG → `POST /chat/completions`，`/models` 不返回能力信息故必须探针）。协议层 `AiClient`（core，OpenAI 兼容；网络 I/O 全在 IO 调度器，坑 7；非 2xx 直接抛；请求体/密钥不入日志）；单测 `AiClientTest`（MockWebServer）。**设计红线：AI 只出建议、不自动执行**；**默认关**（未启用不联网、不外发）。**P1**=对「已选文件」给上传去向建议（复用队列/UploadPlanning，零新执行路径）；**P2**=清理建议（**软删除 + 强确认 + 可撤销**，涉及删除须单独拍板）。视频不做。地址为运行时用户配置，不写入任何环境信息 |
+| AI 落点建议（P1，2026-10-15 拍板） | 本地多选 → 上传确认框「AI 建议落点」：`AiSuggest`（data，纯函数提示词 + 解析，单测）拼「仓库根目录列表 + 当前目录 + 所选文件名」+ **图片缩略图**（`ImageThumb` 最长边 512 / JPEG q70，最多 4 张 → `AiClient.chatVision` 多图）→ 模型返回一个 `/` 开头目录。**只建议**：确认框内勾选「改用此目录」才生效（`uploadSelected(targetOverride)`）；自动归类模式不适用；无图退回 `chatText`；失败只显错误不阻断上传 |
 
 ## V1 范围（MUST）
 

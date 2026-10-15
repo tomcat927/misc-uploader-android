@@ -2,6 +2,7 @@ package com.tomcat927.miscuploader
 
 import com.tomcat927.miscuploader.core.AiClient
 import com.tomcat927.miscuploader.core.AiException
+import com.tomcat927.miscuploader.core.AiImage
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
@@ -55,7 +56,7 @@ class AiClientTest {
         server.enqueue(
             MockResponse().setBody("""{"choices":[{"message":{"role":"assistant","content":"白色"}}]}"""),
         )
-        val out = newClient().chatVision("gpt-4o", "什么颜色", "AAAA", "image/png")
+        val out = newClient().chatVision("gpt-4o", "什么颜色", listOf(AiImage("AAAA", "image/png")))
 
         assertEquals("白色", out)
         val req = server.takeRequest()

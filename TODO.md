@@ -64,6 +64,12 @@
 4. 错误路径:地址错/密钥错 → 「获取模型」明确报错(HTTP 4xx 原文片段),不静默
 5. 默认关:不开启时诊断日志无任何 `ai` 打点(未联网)
 
+**P1 已落地(2026-10-15)**: 本地多选 → 上传确认框「AI 建议落点」——`data/AiSuggest.kt`(纯函数提示词+解析,`AiSuggestTest` 覆盖)、`core/ImageThumb.kt`(图片缩略图 512/q70)、`AiClient.chatVision` 改多图、`HomeViewModel.requestUploadSuggestion`、`HomeScreen` 确认框勾选采用(`uploadSelected(targetOverride)`)。**只建议**:勾选「改用此目录」才生效;自动归类模式不适用。
+
+**P1 实测清单**: ① 选几个图片 → 上传确认框 → 「AI 建议落点」→ 出建议目录 → 勾选「改用」→ 执行上传落点正确;② 选纯文档 → 走纯文本(无图)路径;③ 未配置 AI → 明确报「未配置 AI 助手」;④ 建议失败不阻断上传(仍可正常传当前目录)
+
+**顺带修复(2026-10-15)**: 首次「去授权」返回后左栏授权卡片不消失 → `HomeViewModel.onResumed()` + `HomeScreen` ON_RESUME 复检(刚授权则刷新左栏)
+
 ## 待办 — 开发队列(按推荐顺序)
 
 1. ~~A1 SHA-256 去重 + 上传历史~~ ✅ 2026-10-04: 内容级去重(同内容任意目录跳过+提示已有路径,PUT 前流式 hash/「校验中」状态)、Room upload_history(sha→最新落点,上限一万自动修剪)、队列页「历史」chip;DB v1→v2 Migration;**顺带修 M3 队列排序 bug(partition 解构颠倒)**——真机实测见下节

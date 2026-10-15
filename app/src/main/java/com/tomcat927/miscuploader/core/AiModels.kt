@@ -14,6 +14,9 @@ data class AiModelEntry(
     val owned_by: String? = null,
 )
 
+/** 多模态输入的一张图片(base64 内联,data URI 用) */
+data class AiImage(val base64: String, val mime: String)
+
 /** AI 协议层异常:message 直接面向用户展示;code = HTTP 状态码(0 = 协议/解析错误) */
 class AiException(message: String, val code: Int = 0) : Exception(message)
 
