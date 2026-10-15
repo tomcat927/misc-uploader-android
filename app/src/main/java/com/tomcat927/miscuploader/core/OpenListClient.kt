@@ -224,9 +224,9 @@ class OpenListClient(
         return execute(req)
     }
 
-    private suspend fun execute(request: Request): String {
+    private suspend fun execute(request: Request): String = withContext(Dispatchers.IO) {
         val started = System.currentTimeMillis()
-        return try {
+        try {
             client.newCall(request).await().use { response ->
                 val text = response.body?.string().orEmpty()
                 debugLog?.invoke(

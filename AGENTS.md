@@ -33,6 +33,7 @@ misc-uploader-android：杂物数字仓库（tianyi-misc-repo，私有仓）的 
 4. **Android 必须声明 `INTERNET` 权限**：漏了会报 `socket failed: EPERM (Operation not permitted)`——这是权限缺失的标志错误，不是服务器问题（CI/单测测不到 Manifest，只有真机联网才暴露）。首次真机实测即踩中。另注意：Android 默认禁 cleartext，用户输 `http://` 会报 "Cleartext HTTP traffic not permitted"（与 EPERM 区分）。（2026-10-03）
 5. **Android 常量名不要凭训练数据硬写**：ACTION_MANAGE_APP_INSTALL_SOURCES 不存在（真实为 ACTION_MANAGE_UNKNOWN_APP_SOURCES + package URI data，API 26+）；不确定的常量/字段名先查 AOSP 源码或官方文档，否则 CI 才暴露。（2026-10-04）
 6. **依赖坐标/发布仓不要凭记忆硬写**：libsu 的坐标是 `com.github.topjohnwu.libsu:core`（3.x 起拆模块 core/io/service/nio）且**只在 JitPack 发布**——写成 `com.github.topjohnwu:libsu` + mavenCentral 会报 `Could not find`；settings.gradle.kts 需加 jitpack.io 仓。且 **JitPack group 带 `.github.` 前缀但运行时包名不带**（libsu 的包是 `com.topjohnwu.superuser.*`，不是 `com.topjohnwu.libsu.*`——库名与包名无关）；引依赖前先 `curl` 仓库 metadata / 下 AAR 解包 `unzip -l classes.jar` 核实坐标、发布仓、包名与 API 签名（6.0 的 `Shell.Job` 无 stdout 转 OutputStream，流式读文件要用 io 模块 `SuFileInputStream`）。（2026-10-05）
+7. **网络 I/O 必须在 IO 调度器上**：`OpenListClient` 用 OkHttp `enqueue`（异步）拿响应，但 `response.body.string()` 读的是 socket——协程若跑在 `Dispatchers.Main`（如 `viewModelScope` 点「连接」），读 body 时主线程碰 socket 直接抛 `NetworkOnMainThreadException`。响应体小（≤ Okio 段 8192B，随响应头一并缓冲）时不报错，一旦响应变大/网络拆包/走代理就炸——潜伏 bug，量变到质变，表现为"之前好好的突然连不上"。`execute()` 已整体包 `withContext(Dispatchers.IO)`；新增读响应的路径同理。单测跑 JVM `runTest` 无主线程检查，CI 测不到，只有真机主线程调用才暴露。（2026-10-06）
 
 ## 凭据与安全规约（不可妥协）
 
