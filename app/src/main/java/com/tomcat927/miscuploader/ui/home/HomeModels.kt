@@ -15,6 +15,12 @@ data class FileItem(
 /** AI 清理建议的单条(仅建议;删除由用户确认后走软删除) */
 data class CleanupItem(val name: String, val reason: String)
 
+/** 回收站里的一个文件(rel = 相对存储根的原路径,用于恢复) */
+data class TrashFile(val stamp: String, val rel: String, val size: Long)
+
+/** 回收站的一个批次(一次软删除) */
+data class TrashBatch(val stamp: String, val files: List<TrashFile>)
+
 /** 单侧浏览器状态 */
 data class BrowserState(
     val path: String,

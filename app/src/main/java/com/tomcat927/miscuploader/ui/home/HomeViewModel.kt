@@ -597,12 +597,18 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             val moved = withContext(Dispatchers.IO) {
                 val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.CHINA).format(Date())
-                val trash = File(localRoot, ".misc-trash/$stamp")
+                val trash = File(File(localRoot, TRASH_DIR), stamp)
                 var n = 0
                 selected.forEach { name ->
                     val src = File(joinPath(dir, name))
                     if (!src.exists()) return@forEach
-                    val dst = File(trash, name)
+                    // 镜像原目录结构(rel 相对存储根),恢复时能回到原位
+                    val rel = if (src.absolutePath.startsWith(localRoot)) {
+                        src.absolutePath.removePrefix(localRoot).trimStart('/')
+                    } else {
+                        name
+                    }
+                    val dst = File(trash, rel)
                     dst.parentFile?.mkdirs()
                     if (src.renameTo(dst)) n++
                 }
@@ -614,6 +620,94 @@ class HomeViewModel @Inject constructor(
                 else "移入回收站失败（跨存储卷或权限不足）",
             )
             load(Side.LEFT, dir, refresh = true)
+        }
+    }
+
+    // ---- 回收站(软删除的可撤销入口;查看/恢复/清空) ----
+
+    private val _trash = MutableStateFlow<List<TrashBatch>?>(null)
+    val trash: StateFlow<List<TrashBatch>?> = _trash.asStateFlow()
+
+    private val _trashError = MutableStateFlow<String?>(null)
+    val trashError: StateFlow<String?> = _trashError.asStateFlow()
+
+    fun openTrash() {
+        _trash.value = null
+        _trashError.value = null
+        viewModelScope.launch {
+            try {
+                _trash.value = withContext(Dispatchers.IO) { scanTrash() }
+            } catch (e: Exception) {
+                _trashError.value = e.message ?: e.javaClass.simpleName
+            }
+        }
+    }
+
+    fun closeTrash() {
+        _trash.value = null
+        _trashError.value = null
+    }
+
+    private fun scanTrash(): List<TrashBatch> {
+        val root = File(localRoot, TRASH_DIR)
+        if (!root.isDirectory) return emptyList()
+        return root.listFiles().orEmpty()
+            .filter { it.isDirectory }
+            .sortedByDescending { it.name }
+            .mapNotNull { batch ->
+                val files = batch.walkTopDown()
+                    .filter { it.isFile }
+                    .map { TrashFile(batch.name, it.relativeTo(batch).path, it.length()) }
+                    .sortedBy { it.rel }
+                    .toList()
+                if (files.isEmpty()) null else TrashBatch(batch.name, files)
+            }
+    }
+
+    /** 恢复选中项到原路径(同名不覆盖);随后刷新回收站 */
+    fun restoreTrash(items: List<TrashFile>) {
+        if (items.isEmpty()) return
+        viewModelScope.launch {
+            val (ok, fail) = withContext(Dispatchers.IO) {
+                var okCount = 0
+                var failCount = 0
+                items.forEach { item ->
+                    val src = File(File(File(localRoot, TRASH_DIR), item.stamp), item.rel)
+                    val dst = File(localRoot, item.rel)
+                    when {
+                        !src.exists() -> failCount++
+                        dst.exists() -> failCount++ // 不覆盖
+                        else -> {
+                            dst.parentFile?.mkdirs()
+                            if (src.renameTo(dst)) okCount++ else failCount++
+                        }
+                    }
+                }
+                pruneEmptyTrashDirs()
+                okCount to failCount
+            }
+            events.emit(
+                "已恢复 $ok 项" + if (fail > 0) "，$fail 项失败（同名或已缺失）" else "",
+            )
+            openTrash()
+        }
+    }
+
+    /** 清空回收站(永久删除;UI 层强确认) */
+    fun emptyTrash() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                File(localRoot, TRASH_DIR).deleteRecursively()
+            }
+            events.emit("回收站已清空")
+            openTrash()
+        }
+    }
+
+    private fun pruneEmptyTrashDirs() {
+        val root = File(localRoot, TRASH_DIR)
+        root.listFiles().orEmpty().filter { it.isDirectory }.forEach { batch ->
+            if (batch.walkTopDown().none { it.isFile }) batch.deleteRecursively()
         }
     }
 
@@ -1069,6 +1163,9 @@ class HomeViewModel @Inject constructor(
     companion object {
         /** AI 落点建议最多附带的图片张数(控体积/成本/隐私) */
         private const val MAX_SUGGEST_IMAGES = 4
+
+        /** 本地软删除的回收站目录(存储根下,隐藏) */
+        private const val TRASH_DIR = ".misc-trash"
 
         private val ITEM_ORDER =
             compareByDescending<FileItem> { it.isDir }.thenBy { it.name.lowercase() }

@@ -50,6 +50,7 @@ import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.ManageSearch
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
@@ -124,6 +125,8 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val cleanupSuggestion by viewModel.cleanupSuggestion.collectAsState()
     val cleanupLoading by viewModel.cleanupLoading.collectAsState()
     val cleanupError by viewModel.cleanupError.collectAsState()
+    val trash by viewModel.trash.collectAsState()
+    val trashError by viewModel.trashError.collectAsState()
     val context = LocalContext.current
     val galleryUrl = GalleryLink.forDir(pigalleryBase, right.path)
     val snackbarHostState = remember { SnackbarHostState() }
@@ -133,6 +136,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     var remoteDeleteConfirm by remember { mutableStateOf(false) }
     var localDeleteConfirm by remember { mutableStateOf(false) }
     var cleanupOpen by remember { mutableStateOf(false) }
+    var trashOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         viewModel.events.collect { snackbarHostState.showSnackbar(it) }
@@ -204,6 +208,10 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                     cleanupOpen = true
                     viewModel.requestCleanupSuggestion()
                 },
+                onOpenTrash = {
+                    trashOpen = true
+                    viewModel.openTrash()
+                },
                 onCancelSelection = viewModel::clearSelection,
                 onRecheckStorage = {
                     viewModel.recheckStoragePermission()
@@ -257,6 +265,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onMoveSelection = { remoteMovePicker = true },
                 onDeleteSelection = { remoteDeleteConfirm = true },
                 onAiCleanup = null,
+                onOpenTrash = null,
                 onCancelSelection = viewModel::clearSelectionRight,
                 onRecheckStorage = {},
                 modifier = Modifier.weight(rightWeight).fillMaxHeight(),
@@ -375,6 +384,19 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
         )
     }
 
+    if (trashOpen) {
+        TrashDialog(
+            batches = trash,
+            error = trashError,
+            onRestore = { viewModel.restoreTrash(it) },
+            onEmpty = { viewModel.emptyTrash() },
+            onDismiss = {
+                trashOpen = false
+                viewModel.closeTrash()
+            },
+        )
+    }
+
     search?.let { s ->
         LocalSearchDialog(
             state = s,
@@ -435,6 +457,8 @@ private fun BrowserPane(
     onDeleteSelection: () -> Unit,
     /** AI 清理入口(仅本地栏传入;null 不显示) */
     onAiCleanup: (() -> Unit)?,
+    /** 回收站入口(仅本地栏传入;null 不显示) */
+    onOpenTrash: (() -> Unit)?,
     onCancelSelection: () -> Unit,
     onRecheckStorage: () -> Unit,
     modifier: Modifier = Modifier,
@@ -455,6 +479,15 @@ private fun BrowserPane(
                 Text("root", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.tertiary)
             }
             Spacer(Modifier.weight(1f))
+            onOpenTrash?.let { open ->
+                FilledTonalIconButton(onClick = open, modifier = Modifier.size(30.dp)) {
+                    Icon(
+                        Icons.Filled.RestoreFromTrash,
+                        contentDescription = "回收站",
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
+            }
             onOpenGallery?.let { open ->
                 FilledTonalIconButton(onClick = open, modifier = Modifier.size(30.dp)) {
                     Icon(
@@ -1302,6 +1335,113 @@ private fun LocalCleanupDeleteDialog(paths: List<String>, onConfirm: () -> Unit,
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
+}
+
+/** 回收站(软删除的可撤销入口):查看 / 恢复选中 / 清空(二次确认) */
+@Composable
+private fun TrashDialog(
+    batches: List<TrashBatch>?,
+    error: String?,
+    onRestore: (List<TrashFile>) -> Unit,
+    onEmpty: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val allFiles = batches.orEmpty().flatMap { it.files }
+    var checked by remember(batches) { mutableStateOf(allFiles.map { it.stamp to it.rel }.toSet()) }
+    var confirmEmpty by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("回收站") },
+        text = {
+            Column {
+                when {
+                    error != null -> Text(
+                        error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+
+                    batches == null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("读取中…", style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    allFiles.isEmpty() -> Text("回收站是空的", style = MaterialTheme.typography.bodySmall)
+
+                    else -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "共 ${allFiles.size} 项（软删除，可恢复）",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = { confirmEmpty = true }) {
+                                Text("清空", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        LazyColumn(Modifier.height(260.dp)) {
+                            batches.orEmpty().forEach { batch ->
+                                item(key = "h-${batch.stamp}") {
+                                    Text(
+                                        batch.stamp,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(vertical = 4.dp),
+                                    )
+                                }
+                                items(batch.files, key = { "${batch.stamp}/${it.rel}" }) { f ->
+                                    val k = f.stamp to f.rel
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Checkbox(
+                                            checked = k in checked,
+                                            onCheckedChange = { c -> checked = if (c) checked + k else checked - k },
+                                        )
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                f.rel,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Text(
+                                                formatBytes(f.size),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onRestore(allFiles.filter { (it.stamp to it.rel) in checked }) },
+                enabled = checked.isNotEmpty(),
+            ) { Text("恢复选中 ${checked.size} 项") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
+
+    if (confirmEmpty) {
+        AlertDialog(
+            onDismissRequest = { confirmEmpty = false },
+            title = { Text("清空回收站", color = MaterialTheme.colorScheme.error) },
+            text = { Text("将永久删除回收站内全部 ${allFiles.size} 项，不可恢复。") },
+            confirmButton = {
+                TextButton(onClick = { confirmEmpty = false; onEmpty() }) {
+                    Text("永久删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmEmpty = false }) { Text("取消") } },
+        )
+    }
 }
 
 private fun Side.nameForUi(): String = when (this) {
