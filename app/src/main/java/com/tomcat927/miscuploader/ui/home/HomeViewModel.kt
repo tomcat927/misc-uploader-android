@@ -12,6 +12,7 @@ import com.tomcat927.miscuploader.core.AiClient
 import com.tomcat927.miscuploader.core.ImageThumb
 import com.tomcat927.miscuploader.core.OpenListApiException
 import com.tomcat927.miscuploader.data.AiSuggest
+import com.tomcat927.miscuploader.data.AppLogger
 import com.tomcat927.miscuploader.data.ConnectionManager
 import com.tomcat927.miscuploader.data.RootEntry
 import com.tomcat927.miscuploader.data.RootShell
@@ -60,6 +61,7 @@ class HomeViewModel @Inject constructor(
     private val uploadRepository: UploadRepository,
     private val settings: SettingsRepository,
     private val okHttpClient: OkHttpClient,
+    private val logger: AppLogger,
 ) : ViewModel() {
 
     private val localRoot: String = Environment.getExternalStorageDirectory().absolutePath
@@ -507,6 +509,7 @@ class HomeViewModel @Inject constructor(
                 } else {
                     ai.chatVision(cfg.model, prompt, images, AiSuggest.SYSTEM_PROMPT)
                 }
+                logger.log("ai", "落点建议原始回复（${raw.length} 字符）：${raw.take(400)}")
                 _suggestion.value = AiSuggest.parseDir(raw, _right.value.path)
             } catch (e: CancellationException) {
                 throw e
@@ -572,8 +575,20 @@ class HomeViewModel @Inject constructor(
                 }
                 val items = AiSuggest.parseCleanup(raw, names.toSet())
                     .map { CleanupItem(it.first, it.second) }
-                if (items.isEmpty()) _cleanupError.value = "AI 未给出清理建议"
-                else _cleanup.value = items
+                logger.log(
+                    "ai",
+                    "清理建议：目录=$dir，文件 ${names.size} 个，解析出 ${items.size} 项，回复 ${raw.length} 字符",
+                )
+                logger.log("ai", "清理建议原始回复：${raw.take(800)}")
+                if (items.isEmpty()) {
+                    _cleanupError.value = if (AiSuggest.saysNothingToClean(raw)) {
+                        "AI 认为该目录无需清理"
+                    } else {
+                        "AI 回复无法解析（已记入诊断日志：设置 → 诊断 → 上传到服务器）"
+                    }
+                } else {
+                    _cleanup.value = items
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

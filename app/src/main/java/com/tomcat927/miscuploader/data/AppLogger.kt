@@ -55,6 +55,13 @@ class AppLogger @Inject constructor(
         }.getOrDefault("（读取失败）")
     }
 
+    /** 读全文(远程上传诊断日志用;文件本身有 256KB 上限) */
+    suspend fun readAll(): String = withContext(Dispatchers.IO) {
+        runCatching {
+            if (logFile.exists()) logFile.readText() else "（暂无日志）"
+        }.getOrDefault("（读取失败）")
+    }
+
     /** 清空日志(诊断页按钮;清空本身也记一条,保证文件不为空) */
     suspend fun clear() = withContext(Dispatchers.IO) {
         synchronized(fileLock) {

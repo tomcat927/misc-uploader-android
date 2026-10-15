@@ -32,22 +32,37 @@ object AiSuggest {
         appendLine("请只列出建议清理的文件，每行：文件名<TAB>理由。")
     }
 
+    private val LEADING_MARKER = Regex("^[\\s\\-*•·>#]+")
+    private val LEADING_NUMBER = Regex("^\\d+\\s*[.、)）:：]\\s*")
+    private val TRIM_CHARS = charArrayOf('「', '」', '『', '』', '"', '\'', '`', '*', ' ')
+
+    /** 模型明确表示「无需清理」(区别于解析失败) */
+    fun saysNothingToClean(response: String): Boolean {
+        val t = response.trim().trim('。', '.', '!', '！', '?', '？', ' ', '\n', '\t')
+        return t.isEmpty() || t in setOf("无", "无建议", "无需清理", "没有", "none", "None", "NONE")
+    }
+
     /**
      * 解析清理建议:逐行取「文件名 + 理由」;仅保留确实存在于 [available] 的名字(防模型编造)。
-     * 兼容「名<TAB>理由」「名 - 理由」「名：理由」「「名」理由」等写法。
+     * 逐行先去掉列表标记(- / * / • / 1. / 1、/ 1) )与成对引号/反引号/markdown 粗体,
+     * 再按「长名优先」匹配行首文件名;兼容「名<TAB>理由」「名 - 理由」「名：理由」等写法。
      */
     fun parseCleanup(response: String, available: Set<String>): List<Pair<String, String>> {
         if (available.isEmpty()) return emptyList()
         val names = available.sortedByDescending { it.length } // 长名优先,避免前缀误配
         val out = mutableListOf<Pair<String, String>>()
         response.trim().lines().forEach { raw ->
-            val line = raw.trim().trimStart('-', '*', ' ', '\t').removePrefix("「").trim()
+            var line = raw.trim()
+            line = LEADING_MARKER.replace(line, "")
+            line = LEADING_NUMBER.replace(line, "")
+            line = line.trim().trim(*TRIM_CHARS).trim()
             if (line.isEmpty()) return@forEach
             val name = names.firstOrNull { line.startsWith(it) } ?: return@forEach
             if (out.any { it.first == name }) return@forEach
             val reason = line.removePrefix(name)
                 .trim()
-                .trimStart(':', '：', '-', '—', '\t', ' ', '」', '”', '"', '，', ',')
+                .trimStart(':', '：', '-', '—', '–', '\t', ' ', ',', '，', ';', '；', ')', '）', ']', '】', '」', '』', '"', '\'', '`', '*')
+                .trim()
             out += name to reason
         }
         return out

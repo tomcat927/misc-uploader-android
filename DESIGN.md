@@ -71,6 +71,7 @@
 | AI 落点建议（P1，2026-10-15 拍板） | 本地多选 → 上传确认框「AI 建议落点」：`AiSuggest`（data，纯函数提示词 + 解析，单测）拼「仓库根目录列表 + 当前目录 + 所选文件名」+ **图片缩略图**（`ImageThumb` 最长边 512 / JPEG q70，最多 4 张 → `AiClient.chatVision` 多图）→ 模型返回一个 `/` 开头目录。**只建议**：确认框内勾选「改用此目录」才生效（`uploadSelected(targetOverride)`）；自动归类模式不适用；无图退回 `chatText`；失败只显错误不阻断上传 |
 | AI 清理建议（P2，2026-10-15 拍板） | **本地**手机文件（左栏当前目录）→ 底栏「AI 清理」：`AiSuggest.cleanupPrompt/parseCleanup`（纯函数，单测）把目录内文件名 + 图片缩略图交模型 → 返回「建议清理清单（文件名+理由）」→ 弹框勾选 → `applyCleanup` **预选进左栏多选**。**删除 = 软删除**：本地多选新增「删除」→ 强确认 → `deleteSelectedLocal` 移到 `<存储根>/.misc-trash/<时间戳>/`（`renameTo`，可移回；不立即释放空间）。**AI 永不自动删**；解析只认目录中真实存在的文件名（防模型编造） |
 | 回收站（2026-10-15 拍板） | 软删除的撤销入口：本地栏顶栏「回收站」图标 → `scanTrash` 按批次列出（`.misc-trash/<时间戳>/`，**镜像原目录结构**，故 `rel` = 原相对路径）→ 勾选**恢复**（`renameTo` 回原位置，同名不覆盖，空批次自动清理）或**清空**（永久删除，二次确认）。为此 `deleteSelectedLocal` 改为镜像存放（`rel` = 绝对路径去存储根），使恢复能回到原位 |
+| 远程诊断日志（2026-10-15 拍板） | 对齐 notion-app-android 的做法：设置页「诊断」卡新增「上传到服务器」→ `RemoteLogUploader`（data）**复用本 App 已有的 OpenList 连接**（未连接则用已存配置登录）→ 把脱敏快照（上传日志全文 + 版本 + 设备/系统 + `SystemDiagnostics` 退出原因）PUT 到 `<远程根>/_logs/install-<installId>/diagnostic-<yyyyMMdd-HHmmss>.txt`，返回远程路径可复制。对 `token/password/authorization/cookie` 脱敏；`installId` 随机生成存 SharedPreferences。**动机**：零本地环境下排查者需直接取回日志，免手动复制粘贴 |
 
 ## V1 范围（MUST）
 

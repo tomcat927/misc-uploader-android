@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.tomcat927.miscuploader.core.AiClient
 import com.tomcat927.miscuploader.data.AppLogger
 import com.tomcat927.miscuploader.data.ConnectionManager
+import com.tomcat927.miscuploader.data.RemoteLogUploader
 import com.tomcat927.miscuploader.data.ServerConfig
 import com.tomcat927.miscuploader.data.SettingsRepository
 import com.tomcat927.miscuploader.data.SystemDiagnostics
@@ -28,6 +29,11 @@ data class DiagnosticsUiState(
     val loading: Boolean = false,
     val logText: String = "",
     val exitText: String = "",
+    /** 远程日志上传中 */
+    val uploading: Boolean = false,
+    /** 上传成功后的远程路径 */
+    val uploadResult: String? = null,
+    val uploadError: String? = null,
 )
 
 data class SettingsUiState(
@@ -67,6 +73,7 @@ class SettingsViewModel @Inject constructor(
     private val settings: SettingsRepository,
     private val connection: ConnectionManager,
     private val logger: AppLogger,
+    private val remoteLogUploader: RemoteLogUploader,
     private val okHttpClient: OkHttpClient,
 ) : ViewModel() {
 
@@ -430,6 +437,35 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             logger.clear()
             loadDiagnostics()
+        }
+    }
+
+    /** 上传诊断日志到 OpenList(复用已配置的连接),返回远程路径供排查者取回 */
+    fun uploadDiagnostics() {
+        _uiState.update {
+            it.copy(
+                diagnostics = it.diagnostics.copy(uploading = true, uploadResult = null, uploadError = null),
+            )
+        }
+        viewModelScope.launch {
+            try {
+                val path = remoteLogUploader.upload()
+                _uiState.update {
+                    it.copy(diagnostics = it.diagnostics.copy(uploading = false, uploadResult = path))
+                }
+                loadDiagnostics()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        diagnostics = it.diagnostics.copy(
+                            uploading = false,
+                            uploadError = e.message ?: e.javaClass.simpleName,
+                        ),
+                    )
+                }
+            }
         }
     }
 }

@@ -230,6 +230,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 onToggle = viewModel::toggleDiagnostics,
                 onRefresh = viewModel::loadDiagnostics,
                 onClear = viewModel::clearDiagnostics,
+                onUpload = viewModel::uploadDiagnostics,
             )
         }
     }

@@ -33,6 +33,7 @@ fun DiagnosticsCard(
     onToggle: () -> Unit,
     onRefresh: () -> Unit,
     onClear: () -> Unit,
+    onUpload: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val clipboard = LocalClipboardManager.current
@@ -64,9 +65,33 @@ fun DiagnosticsCard(
                     ) {
                         Text("复制全部")
                     }
-                    if (state.loading) {
+                    TextButton(onClick = onUpload, enabled = !state.loading && !state.uploading) {
+                        Text(if (state.uploading) "上传中…" else "上传到服务器")
+                    }
+                    if (state.loading || state.uploading) {
                         Spacer(Modifier.weight(1f))
                         CircularProgressIndicator(modifier = Modifier.padding(end = 8.dp).heightIn(max = 18.dp))
+                    }
+                }
+
+                state.uploadError?.let {
+                    Text(
+                        "上传失败：$it",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                state.uploadResult?.let { path ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "已上传：$path",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { clipboard.setText(AnnotatedString(path)) }) {
+                            Text("复制路径")
+                        }
                     }
                 }
 
