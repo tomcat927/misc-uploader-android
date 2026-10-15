@@ -57,6 +57,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -91,6 +92,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tomcat927.miscuploader.core.GalleryLink
 import com.tomcat927.miscuploader.data.UploadMode
+import com.tomcat927.miscuploader.data.db.CleanupAfter
 import com.tomcat927.miscuploader.ui.viewer.FileViewerDialog
 
 /**
@@ -119,12 +121,9 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val searchSelection by viewModel.searchSelection.collectAsState()
     val searchHistory by viewModel.searchHistory.collectAsState()
     val viewerRequest by viewModel.viewerRequest.collectAsState()
-    val aiSuggestion by viewModel.aiSuggestion.collectAsState()
-    val aiSuggesting by viewModel.aiSuggesting.collectAsState()
-    val aiSuggestError by viewModel.aiSuggestError.collectAsState()
-    val cleanupSuggestion by viewModel.cleanupSuggestion.collectAsState()
-    val cleanupLoading by viewModel.cleanupLoading.collectAsState()
-    val cleanupError by viewModel.cleanupError.collectAsState()
+    val archivePlan by viewModel.aiArchivePlan.collectAsState()
+    val archiveLoading by viewModel.aiArchiveLoading.collectAsState()
+    val archiveError by viewModel.aiArchiveError.collectAsState()
     val trash by viewModel.trash.collectAsState()
     val trashError by viewModel.trashError.collectAsState()
     val context = LocalContext.current
@@ -135,7 +134,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     var remoteMovePicker by remember { mutableStateOf(false) }
     var remoteDeleteConfirm by remember { mutableStateOf(false) }
     var localDeleteConfirm by remember { mutableStateOf(false) }
-    var cleanupOpen by remember { mutableStateOf(false) }
+    var archiveOpen by remember { mutableStateOf(false) }
     var trashOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -201,12 +200,12 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onOpenFile = { viewModel.openFile(Side.LEFT, it) },
                 onItemLongPress = viewModel::onItemLongPress,
                 onItemToggleSelect = viewModel::toggleSelect,
-                onUploadSelection = { viewModel.clearSuggestion(); uploadConfirm = true },
+                onUploadSelection = { uploadConfirm = true },
                 onMoveSelection = {},
                 onDeleteSelection = { localDeleteConfirm = true },
-                onAiCleanup = {
-                    cleanupOpen = true
-                    viewModel.requestCleanupSuggestion()
+                onAiArchive = {
+                    archiveOpen = true
+                    viewModel.requestArchiveSuggestion()
                 },
                 onOpenTrash = {
                     trashOpen = true
@@ -264,7 +263,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onUploadSelection = {},
                 onMoveSelection = { remoteMovePicker = true },
                 onDeleteSelection = { remoteDeleteConfirm = true },
-                onAiCleanup = null,
+                onAiArchive = null,
                 onOpenTrash = null,
                 onCancelSelection = viewModel::clearSelectionRight,
                 onRecheckStorage = {},
@@ -341,34 +340,26 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             count = selectedLeft.size,
             autoMode = uploadMode == UploadMode.AUTO_DATE,
             manualTargetDesc = viewModel.breadcrumbOf(Side.RIGHT, right.path).joinToString("/"),
-            suggestion = aiSuggestion,
-            suggesting = aiSuggesting,
-            suggestError = aiSuggestError,
-            onSuggest = viewModel::requestUploadSuggestion,
-            onConfirm = { override ->
-                viewModel.uploadSelected(override)
+            onConfirm = {
+                viewModel.uploadSelected()
                 uploadConfirm = false
             },
-            onDismiss = {
-                uploadConfirm = false
-                viewModel.clearSuggestion()
-            },
+            onDismiss = { uploadConfirm = false },
         )
     }
 
-    if (cleanupOpen) {
-        CleanupSuggestionDialog(
-            suggestions = cleanupSuggestion ?: emptyList(),
-            loading = cleanupLoading,
-            error = cleanupError,
-            onApply = { names ->
-                viewModel.applyCleanup(names)
-                cleanupOpen = false
-                viewModel.dismissCleanup()
+    if (archiveOpen) {
+        ArchiveSuggestionDialog(
+            plan = archivePlan,
+            loading = archiveLoading,
+            error = archiveError,
+            onAdopt = { cleanupAfter ->
+                viewModel.adoptArchive(cleanupAfter)
+                archiveOpen = false
             },
             onDismiss = {
-                cleanupOpen = false
-                viewModel.dismissCleanup()
+                archiveOpen = false
+                viewModel.dismissArchive()
             },
         )
     }
@@ -455,8 +446,8 @@ private fun BrowserPane(
     onUploadSelection: () -> Unit,
     onMoveSelection: () -> Unit,
     onDeleteSelection: () -> Unit,
-    /** AI 清理入口(仅本地栏传入;null 不显示) */
-    onAiCleanup: (() -> Unit)?,
+    /** AI 归档入口(仅本地栏传入;null 不显示) */
+    onAiArchive: (() -> Unit)?,
     /** 回收站入口(仅本地栏传入;null 不显示) */
     onOpenTrash: (() -> Unit)?,
     onCancelSelection: () -> Unit,
@@ -663,11 +654,11 @@ private fun BrowserPane(
                     Spacer(Modifier.width(4.dp))
                     Text("新建文件夹", style = MaterialTheme.typography.labelMedium)
                 }
-                onAiCleanup?.let { cleanup ->
-                    TextButton(onClick = cleanup) {
+                onAiArchive?.let { archive ->
+                    TextButton(onClick = archive) {
                         Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("AI 清理", style = MaterialTheme.typography.labelMedium)
+                        Text("AI 归档", style = MaterialTheme.typography.labelMedium)
                     }
                 }
                 Spacer(Modifier.weight(1f))
@@ -1028,15 +1019,9 @@ private fun UploadConfirmDialog(
     count: Int,
     autoMode: Boolean,
     manualTargetDesc: String,
-    suggestion: String?,
-    suggesting: Boolean,
-    suggestError: String?,
-    onSuggest: () -> Unit,
-    onConfirm: (String?) -> Unit,
+    onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    // 建议变化时重置"采用"勾选(避免沿用上一条建议的状态)
-    var useSuggestion by remember(suggestion) { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("上传") },
@@ -1044,48 +1029,21 @@ private fun UploadConfirmDialog(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("已选择 $count 个文件（文件夹按内部结构展开），将上传到：")
                 Text(
-                    when {
-                        autoMode -> "auto/年/月（按各文件修改时间自动归类）"
-                        useSuggestion && suggestion != null -> suggestion
-                        else -> manualTargetDesc
-                    },
+                    if (autoMode) "auto/年/月（按各文件修改时间自动归类）" else manualTargetDesc,
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
                 if (!autoMode) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextButton(onClick = onSuggest, enabled = !suggesting) {
-                            Text(if (suggesting) "分析中…" else "AI 建议落点")
-                        }
-                        if (suggesting) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        }
-                    }
-                    suggestion?.let { dir ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = useSuggestion, onCheckedChange = { useSuggestion = it })
-                            Column(Modifier.weight(1f)) {
-                                Text("AI 建议：$dir", style = MaterialTheme.typography.bodySmall)
-                                Text(
-                                    "勾选即改用此目录",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                    }
-                    suggestError?.let {
-                        Text(
-                            it,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
+                    Text(
+                        "想按 AI 建议落点归档？用文件页底栏的「AI 归档」。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(if (useSuggestion) suggestion else null) }) { Text("执行上传") }
+            TextButton(onClick = onConfirm) { Text("执行上传") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
@@ -1233,19 +1191,22 @@ private fun DeleteConfirmDialog(paths: List<String>, onConfirm: () -> Unit, onDi
     )
 }
 
-/** AI 清理建议(P2):列出建议清理项+理由,勾选后预选进左栏多选;只建议,不自动删 */
+/**
+ * AI 归档建议(拍板 2026-10-15):显示 AI 给出的仓库落点 + 上传后处理(进待清理/立即清理);
+ * 采纳即按该落点建上传任务。只建议,采纳前不上传、不删除。
+ */
 @Composable
-private fun CleanupSuggestionDialog(
-    suggestions: List<CleanupItem>,
+private fun ArchiveSuggestionDialog(
+    plan: HomeViewModel.ArchivePlan?,
     loading: Boolean,
     error: String?,
-    onApply: (List<String>) -> Unit,
+    onAdopt: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var checked by remember(suggestions) { mutableStateOf(suggestions.map { it.name }.toSet()) }
+    var cleanupAfter by remember(plan) { mutableStateOf(CleanupAfter.PENDING) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("AI 清理建议") },
+        title = { Text("AI 归档") },
         text = {
             Column {
                 when {
@@ -1261,42 +1222,36 @@ private fun CleanupSuggestionDialog(
                         color = MaterialTheme.colorScheme.error,
                     )
 
-                    suggestions.isEmpty() -> Text("没有建议", style = MaterialTheme.typography.bodySmall)
-
-                    else -> {
+                    plan != null -> {
+                        Text("建议归档到：", style = MaterialTheme.typography.bodySmall)
                         Text(
-                            "AI 认为以下 ${suggestions.size} 项可清理（只建议，不会自动删除）：",
-                            style = MaterialTheme.typography.bodySmall,
+                            plan.targetDir,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
                         )
                         Spacer(Modifier.height(6.dp))
-                        LazyColumn(Modifier.height(260.dp)) {
-                            items(suggestions, key = { it.name }) { item ->
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(
-                                        checked = item.name in checked,
-                                        onCheckedChange = { c ->
-                                            checked = if (c) checked + item.name else checked - item.name
-                                        },
-                                    )
-                                    Column(Modifier.weight(1f)) {
-                                        Text(
-                                            item.name,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        if (item.reason.isNotBlank()) {
-                                            Text(
-                                                item.reason,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                        }
-                                    }
-                                }
-                            }
+                        Text(
+                            "已分析 ${plan.fileCount} 个文件" +
+                                (if (plan.hasFolder) "（含文件夹，最深 ${plan.maxDepth} 层）" else "") +
+                                (if (plan.imageCount > 0) "，附 ${plan.imageCount} 张图片" else ""),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Text("上传完成后：", style = MaterialTheme.typography.labelMedium)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = cleanupAfter == CleanupAfter.PENDING,
+                                onClick = { cleanupAfter = CleanupAfter.PENDING },
+                            )
+                            Text("进待清理列表（稍后清理）", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = cleanupAfter == CleanupAfter.IMMEDIATE,
+                                onClick = { cleanupAfter = CleanupAfter.IMMEDIATE },
+                            )
+                            Text("立即清理（移入回收站，可恢复）", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -1304,9 +1259,9 @@ private fun CleanupSuggestionDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onApply(checked.toList()) },
-                enabled = !loading && suggestions.isNotEmpty() && checked.isNotEmpty(),
-            ) { Text("选中这 ${checked.size} 项") }
+                onClick = { onAdopt(cleanupAfter) },
+                enabled = !loading && plan != null,
+            ) { Text("采纳并上传") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
     )

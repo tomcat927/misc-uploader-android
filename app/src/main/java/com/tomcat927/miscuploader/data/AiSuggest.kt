@@ -6,15 +6,33 @@ package com.tomcat927.miscuploader.data
  */
 object AiSuggest {
 
+    /** 归档建议:送给模型的仓库目录数上限 */
+    private const val MAX_PROMPT_DIRS = 80
+
+    /** 归档建议:送给模型的内容名上限 */
+    private const val MAX_PROMPT_NAMES = 120
+
     const val SYSTEM_PROMPT =
-        "你是文件归档助手。根据文件名和图片内容判断这些文件最适合归入哪个目录。" +
+        "你是文件归档助手。根据文件名、图片内容和仓库已有目录结构，判断这些内容最适合归档到仓库的哪个目录。" +
+            "优先沿用已有目录；没有合适的可新建一个简洁的子目录。" +
             "只回复一个以 / 开头的目录路径，不要任何解释、不要引号、不要多余文字。"
 
-    fun prompt(existingDirs: List<String>, currentDir: String, fileNames: List<String>): String = buildString {
-        appendLine("仓库已有目录：${if (existingDirs.isEmpty()) "（无）" else existingDirs.joinToString("、")}")
-        appendLine("当前所在目录：$currentDir")
-        appendLine("待上传文件（共 ${fileNames.size} 个）：")
-        fileNames.take(50).forEach { appendLine("- $it") }
+    /** 归档建议提示词:给出仓库已有目录(供沿用)+ 当前目录 + 待归档内容(文件夹已展开) */
+    fun prompt(
+        existingDirs: List<String>,
+        currentRemoteDir: String,
+        itemNames: List<String>,
+        hasFolder: Boolean = false,
+    ): String = buildString {
+        appendLine("仓库已有目录（供参考，尽量沿用）：")
+        if (existingDirs.isEmpty()) {
+            appendLine("（无）")
+        } else {
+            existingDirs.take(MAX_PROMPT_DIRS).forEach { appendLine("- $it") }
+        }
+        appendLine("当前所在目录：$currentRemoteDir")
+        appendLine(if (hasFolder) "待归档内容（含文件夹，已展开）：" else "待归档文件：")
+        itemNames.take(MAX_PROMPT_NAMES).forEach { appendLine("- $it") }
         appendLine("请只回复一个目录路径（以 / 开头）。可沿用当前目录，或用已有目录，或新建一个子目录。")
     }
 

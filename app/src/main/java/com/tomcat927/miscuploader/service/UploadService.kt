@@ -163,6 +163,8 @@ class UploadService : Service() {
         if (existing != null) {
             logger.log("upload", "去重命中：「${item.displayName}」= ${existing.remotePath}")
             repository.markSkipped(item.id, "同内容已存在：${existing.remotePath}")
+            // 内容已在仓库 = 可安全清理本地原件(AI 归档「进待清理/立即清理」)
+            repository.afterUploaded(item, existing.remotePath, "已在仓库（去重跳过）")
             return
         }
         if (repository.isCancelRequested(item.id)) {
@@ -187,6 +189,7 @@ class UploadService : Service() {
             }
             repository.markDone(item.id)
             repository.recordHistory(sha, item.remotePath, item.displayName, file.length())
+            repository.afterUploaded(item, item.remotePath)
             logger.log("upload", "完成 ${item.displayName}")
             refreshRemoteDir(item.remoteDir)
         } catch (e: UploadCancelledException) {

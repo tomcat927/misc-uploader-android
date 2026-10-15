@@ -9,11 +9,14 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tomcat927.miscuploader.core.AiClient
+import com.tomcat927.miscuploader.core.AiImage
 import com.tomcat927.miscuploader.core.ImageThumb
 import com.tomcat927.miscuploader.core.OpenListApiException
+import com.tomcat927.miscuploader.core.RemoteStorage
 import com.tomcat927.miscuploader.data.AiSuggest
 import com.tomcat927.miscuploader.data.AppLogger
 import com.tomcat927.miscuploader.data.ConnectionManager
+import com.tomcat927.miscuploader.data.LocalTrash
 import com.tomcat927.miscuploader.data.RootEntry
 import com.tomcat927.miscuploader.data.RootShell
 import com.tomcat927.miscuploader.data.SettingsRepository
@@ -21,6 +24,7 @@ import com.tomcat927.miscuploader.data.UploadMode
 import com.tomcat927.miscuploader.data.UploadPlanning
 import com.tomcat927.miscuploader.data.UploadRepository
 import com.tomcat927.miscuploader.data.UploadTask
+import com.tomcat927.miscuploader.data.db.CleanupAfter
 import com.tomcat927.miscuploader.ui.viewer.FileKind
 import com.tomcat927.miscuploader.ui.viewer.REMOTE_PREVIEW_LIMIT
 import com.tomcat927.miscuploader.ui.viewer.ViewerRequest
@@ -380,7 +384,7 @@ class HomeViewModel @Inject constructor(
     }
 
     /** 上传已选项(拍板 A2:手动模式 → 远程当前目录;自动模式 → 按各文件 mtime 归 auto/yyyy/MM) */
-    fun uploadSelected(targetOverride: String? = null) {
+    fun uploadSelected(targetOverride: String? = null, cleanupAfter: Int = CleanupAfter.NONE) {
         val selected = _selectedLeft.value
         if (selected.isEmpty()) return
         viewModelScope.launch {
@@ -407,7 +411,7 @@ class HomeViewModel @Inject constructor(
                             )
                         }
                     }
-                    val count = uploadRepository.enqueueFromRoot(currentLocal, rootEntries, mode, manualTarget)
+                    val count = uploadRepository.enqueueFromRoot(currentLocal, rootEntries, mode, manualTarget, cleanupAfter)
                     if (count > 0) {
                         _selectedLeft.value = emptySet()
                         events.emit("已加入队列：$count 个文件")
@@ -456,31 +460,42 @@ class HomeViewModel @Inject constructor(
             rel = rel,
         )
 
-    // ---- AI 落点建议(P1;拍板:只建议不执行,用户在确认框勾选才采用) ----
+    // ---- AI 归档(合并原 P1 落点建议 + P2 清理建议;拍板 2026-10-15) ----
+    // 选中文件/文件夹 → AI 按仓库结构给落点 → 采纳即建上传任务;
+    // 上传完成后按用户选择「进待清理列表」或「立即清理(移入回收站)」。
 
-    private val _suggestion = MutableStateFlow<String?>(null)
-    val aiSuggestion: StateFlow<String?> = _suggestion.asStateFlow()
+    /** 归档建议结果 */
+    data class ArchivePlan(
+        val targetDir: String,
+        val fileCount: Int,
+        val maxDepth: Int,
+        val imageCount: Int,
+        val hasFolder: Boolean,
+    )
 
-    private val _suggesting = MutableStateFlow(false)
-    val aiSuggesting: StateFlow<Boolean> = _suggesting.asStateFlow()
+    private val _archivePlan = MutableStateFlow<ArchivePlan?>(null)
+    val aiArchivePlan: StateFlow<ArchivePlan?> = _archivePlan.asStateFlow()
 
-    private val _suggestError = MutableStateFlow<String?>(null)
-    val aiSuggestError: StateFlow<String?> = _suggestError.asStateFlow()
+    private val _archiveLoading = MutableStateFlow(false)
+    val aiArchiveLoading: StateFlow<Boolean> = _archiveLoading.asStateFlow()
 
-    fun clearSuggestion() {
-        _suggestion.value = null
-        _suggestError.value = null
-        _suggesting.value = false
+    private val _archiveError = MutableStateFlow<String?>(null)
+    val aiArchiveError: StateFlow<String?> = _archiveError.asStateFlow()
+
+    fun dismissArchive() {
+        _archivePlan.value = null
+        _archiveError.value = null
+        _archiveLoading.value = false
     }
 
-    /** 请 AI 给已选文件建议落点(文本 + 图片缩略图,最多 MAX_SUGGEST_IMAGES 张);失败只记错误不中断 */
-    fun requestUploadSuggestion() {
+    /** 让 AI 分析所选文件/文件夹(递归 ≤ MAX_ARCHIVE_DEPTH 层)并给出仓库落点建议 */
+    fun requestArchiveSuggestion() {
         val selected = _selectedLeft.value
         if (selected.isEmpty()) return
         viewModelScope.launch {
-            _suggesting.value = true
-            _suggestion.value = null
-            _suggestError.value = null
+            _archiveLoading.value = true
+            _archivePlan.value = null
+            _archiveError.value = null
             try {
                 if (!settings.aiStoredConfigFlow.first().enabled) {
                     throw IllegalStateException("AI 助手未启用（设置 → AI 助手）")
@@ -491,143 +506,129 @@ class HomeViewModel @Inject constructor(
                 val client = connection.clientOrNull()
                     ?: throw IllegalStateException("未连接——请到「设置」连接服务器")
                 val localDir = _left.value.path
-                val names = selected.toList()
-                val existingDirs = runCatching {
-                    client.list("/").filter { it.isDir }.map { it.name }.sorted()
-                }.getOrDefault(emptyList())
-                val images = withContext(Dispatchers.IO) {
-                    names.asSequence()
-                        .filter { FileKind.of(it) == FileKind.IMAGE }
-                        .mapNotNull { ImageThumb.encode(File(joinPath(localDir, it))) }
-                        .take(MAX_SUGGEST_IMAGES)
-                        .toList()
-                }
-                val ai = AiClient(cfg.baseUrl, cfg.apiKey, okHttpClient)
-                val prompt = AiSuggest.prompt(existingDirs, _right.value.path, names)
-                val raw = if (images.isEmpty()) {
+                val expanded = withContext(Dispatchers.IO) { expandSelection(localDir, selected.toList()) }
+                val currentRemote = _right.value.path
+                val repoDirs = remoteDirTree(client)
+                val ai = AiClient(cfg.baseUrl, cfg.apiKey, okHttpClient) { logger.log("ai", it) }
+                val prompt = AiSuggest.prompt(
+                    (repoDirs + currentRemote).distinct(),
+                    currentRemote,
+                    expanded.names,
+                    expanded.hasFolder,
+                )
+                val raw = if (expanded.images.isEmpty()) {
                     ai.chatText(cfg.model, prompt, AiSuggest.SYSTEM_PROMPT)
                 } else {
-                    ai.chatVision(cfg.model, prompt, images, AiSuggest.SYSTEM_PROMPT)
+                    ai.chatVision(cfg.model, prompt, expanded.images, AiSuggest.SYSTEM_PROMPT)
                 }
-                logger.log("ai", "落点建议原始回复（${raw.length} 字符）：${raw.take(400)}")
-                _suggestion.value = AiSuggest.parseDir(raw, _right.value.path)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _suggestError.value = e.message ?: e.javaClass.simpleName
-            } finally {
-                _suggesting.value = false
-            }
-        }
-    }
-
-    // ---- AI 清理建议(P2;拍板:只建议不执行;删除=软删除到 .misc-trash) ----
-
-    private val _cleanup = MutableStateFlow<List<CleanupItem>?>(null)
-    val cleanupSuggestion: StateFlow<List<CleanupItem>?> = _cleanup.asStateFlow()
-
-    private val _cleanupLoading = MutableStateFlow(false)
-    val cleanupLoading: StateFlow<Boolean> = _cleanupLoading.asStateFlow()
-
-    private val _cleanupError = MutableStateFlow<String?>(null)
-    val cleanupError: StateFlow<String?> = _cleanupError.asStateFlow()
-
-    fun dismissCleanup() {
-        _cleanup.value = null
-        _cleanupError.value = null
-        _cleanupLoading.value = false
-    }
-
-    /** 请 AI 审查左栏当前目录的文件,给出「建议清理」清单(文件名+理由);只建议,不删除 */
-    fun requestCleanupSuggestion() {
-        val state = _left.value
-        val files = state.entries.filter { !it.isDir }
-        if (files.isEmpty()) {
-            viewModelScope.launch { events.emit("当前目录没有可分析的文件") }
-            return
-        }
-        viewModelScope.launch {
-            _cleanupLoading.value = true
-            _cleanup.value = null
-            _cleanupError.value = null
-            try {
-                if (!settings.aiStoredConfigFlow.first().enabled) {
-                    throw IllegalStateException("AI 助手未启用（设置 → AI 助手）")
-                }
-                val cfg = settings.loadAiDecryptedOnce()
-                    ?: throw IllegalStateException("未配置 AI 助手（设置 → AI 助手）")
-                if (cfg.model.isBlank()) throw IllegalStateException("未选择 AI 模型（设置 → AI 助手）")
-                val dir = state.path
-                val names = files.map { it.name }
-                val images = withContext(Dispatchers.IO) {
-                    names.asSequence()
-                        .filter { FileKind.of(it) == FileKind.IMAGE }
-                        .mapNotNull { ImageThumb.encode(File(joinPath(dir, it))) }
-                        .take(MAX_SUGGEST_IMAGES)
-                        .toList()
-                }
-                val ai = AiClient(cfg.baseUrl, cfg.apiKey, okHttpClient)
-                val prompt = AiSuggest.cleanupPrompt(dir, names)
-                val raw = if (images.isEmpty()) {
-                    ai.chatText(cfg.model, prompt, AiSuggest.CLEANUP_SYSTEM_PROMPT)
-                } else {
-                    ai.chatVision(cfg.model, prompt, images, AiSuggest.CLEANUP_SYSTEM_PROMPT)
-                }
-                val items = AiSuggest.parseCleanup(raw, names.toSet())
-                    .map { CleanupItem(it.first, it.second) }
-                logger.log(
-                    "ai",
-                    "清理建议：目录=$dir，文件 ${names.size} 个，解析出 ${items.size} 项，回复 ${raw.length} 字符",
+                logger.log("ai", "归档建议原始回复（${raw.length} 字符）：${raw.take(400)}")
+                _archivePlan.value = ArchivePlan(
+                    targetDir = AiSuggest.parseDir(raw, currentRemote),
+                    fileCount = expanded.names.size,
+                    maxDepth = expanded.maxDepth,
+                    imageCount = expanded.images.size,
+                    hasFolder = expanded.hasFolder,
                 )
-                logger.log("ai", "清理建议原始回复：${raw.take(800)}")
-                if (items.isEmpty()) {
-                    _cleanupError.value = if (AiSuggest.saysNothingToClean(raw)) {
-                        "AI 认为该目录无需清理"
-                    } else {
-                        "AI 回复无法解析（已记入诊断日志：设置 → 诊断 → 上传到服务器）"
-                    }
-                } else {
-                    _cleanup.value = items
-                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _cleanupError.value = e.message ?: e.javaClass.simpleName
+                _archiveError.value = e.message ?: e.javaClass.simpleName
             } finally {
-                _cleanupLoading.value = false
+                _archiveLoading.value = false
             }
         }
     }
 
-    /** 采纳清理建议:预选这些项(进入左栏多选态,用户再点「删除」确认) */
-    fun applyCleanup(names: List<String>) {
-        _selectedLeft.value = names.toSet()
+    /** 采纳归档建议:按建议落点建上传任务;[cleanupAfter] 决定传完后进待清理还是立即清理 */
+    fun adoptArchive(cleanupAfter: Int) {
+        val plan = _archivePlan.value ?: return
+        _archivePlan.value = null
+        uploadSelected(plan.targetDir, cleanupAfter)
     }
 
-    /** 本地多选「删除」= 软删除:移动到 <存储根>/.misc-trash/<时间戳>/(可移回),非真删 */
+    private class ArchiveRejected(message: String) : Exception(message)
+
+    private class ExpandedSelection(
+        val names: List<String>,
+        val images: List<AiImage>,
+        val maxDepth: Int,
+        val hasFolder: Boolean,
+    )
+
+    /**
+     * 展开所选内容:文件直接用文件名;文件夹递归展开(名字带所选文件夹前缀)。
+     * 层级超过 [MAX_ARCHIVE_DEPTH] 或文件数超过 [MAX_ARCHIVE_FILES] → 抛 [ArchiveRejected](拒绝分析)。
+     */
+    private fun expandSelection(baseDir: String, roots: List<String>): ExpandedSelection {
+        val names = mutableListOf<String>()
+        val images = mutableListOf<AiImage>()
+        var maxDepth = 0
+        var hasFolder = false
+        roots.forEach { name ->
+            val f = File(joinPath(baseDir, name))
+            when {
+                f.isFile -> {
+                    maxDepth = maxOf(maxDepth, 1)
+                    names += name
+                    collectThumb(f, name, images)
+                }
+
+                f.isDirectory -> {
+                    hasFolder = true
+                    f.walkTopDown().forEach { child ->
+                        val rel = child.relativeTo(f).path
+                        if (rel.isEmpty()) return@forEach
+                        val depth = rel.count { it == '/' } + 1
+                        if (depth > MAX_ARCHIVE_DEPTH) {
+                            throw ArchiveRejected("「$name」层级超过 $MAX_ARCHIVE_DEPTH 层，已拒绝分析")
+                        }
+                        if (!child.isFile) return@forEach
+                        if (names.size >= MAX_ARCHIVE_FILES) {
+                            throw ArchiveRejected("内容超过 $MAX_ARCHIVE_FILES 个文件，已拒绝分析")
+                        }
+                        maxDepth = maxOf(maxDepth, depth)
+                        names += "$name/$rel"
+                        collectThumb(child, child.name, images)
+                    }
+                }
+            }
+        }
+        return ExpandedSelection(names, images, maxDepth, hasFolder)
+    }
+
+    private fun collectThumb(file: File, name: String, out: MutableList<AiImage>) {
+        if (out.size >= MAX_SUGGEST_IMAGES) return
+        if (FileKind.of(name) != FileKind.IMAGE) return
+        ImageThumb.encode(file)?.let { out += it }
+    }
+
+    /** 拉取仓库目录树(根 + 若干层)作为归档候选,让建议贴合现有结构 */
+    private suspend fun remoteDirTree(client: RemoteStorage): List<String> = withContext(Dispatchers.IO) {
+        val out = mutableListOf<String>()
+        suspend fun walk(path: String, depth: Int) {
+            if (depth > MAX_REPO_TREE_DEPTH || out.size >= MAX_REPO_DIRS) return
+            val dirs = runCatching {
+                client.list(path).filter { it.isDir }.map { it.name }
+            }.getOrDefault(emptyList())
+            dirs.forEach { n ->
+                if (out.size >= MAX_REPO_DIRS) return
+                val p = if (path == "/") "/$n" else "$path/$n"
+                out += p
+                walk(p, depth + 1)
+            }
+        }
+        walk("/", 1)
+        out
+    }
+
+    /** 本地多选「删除」= 软删除:移到 <存储根>/.misc-trash/<时间戳>/(可移回),非真删 */
     fun deleteSelectedLocal() {
         val selected = _selectedLeft.value
         if (selected.isEmpty()) return
         val dir = _left.value.path
         viewModelScope.launch {
             val moved = withContext(Dispatchers.IO) {
-                val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.CHINA).format(Date())
-                val trash = File(File(localRoot, TRASH_DIR), stamp)
-                var n = 0
-                selected.forEach { name ->
-                    val src = File(joinPath(dir, name))
-                    if (!src.exists()) return@forEach
-                    // 镜像原目录结构(rel 相对存储根),恢复时能回到原位
-                    val rel = if (src.absolutePath.startsWith(localRoot)) {
-                        src.absolutePath.removePrefix(localRoot).trimStart('/')
-                    } else {
-                        name
-                    }
-                    val dst = File(trash, rel)
-                    dst.parentFile?.mkdirs()
-                    if (src.renameTo(dst)) n++
-                }
-                n
+                LocalTrash.moveToTrash(selected.map { joinPath(dir, it) })
             }
             _selectedLeft.value = emptySet()
             events.emit(
@@ -949,7 +950,7 @@ class HomeViewModel @Inject constructor(
                             )
                         }
                     }
-                    uploadRepository.enqueue(tasks)
+            uploadRepository.enqueue(tasks, cleanupAfter)
                     closeSearch()
                     events.emit("已加入队列：${tasks.size} 个文件")
                 }
@@ -1181,6 +1182,18 @@ class HomeViewModel @Inject constructor(
 
         /** 本地软删除的回收站目录(存储根下,隐藏) */
         private const val TRASH_DIR = ".misc-trash"
+
+        /** AI 归档:文件夹最大分析层级(超过则拒绝分析) */
+        private const val MAX_ARCHIVE_DEPTH = 7
+
+        /** AI 归档:最多分析的文件数(超过则拒绝分析) */
+        private const val MAX_ARCHIVE_FILES = 200
+
+        /** AI 归档:仓库目录树拉取层数(根 + N 层) */
+        private const val MAX_REPO_TREE_DEPTH = 2
+
+        /** AI 归档:仓库目录候选上限 */
+        private const val MAX_REPO_DIRS = 60
 
         private val ITEM_ORDER =
             compareByDescending<FileItem> { it.isDir }.thenBy { it.name.lowercase() }

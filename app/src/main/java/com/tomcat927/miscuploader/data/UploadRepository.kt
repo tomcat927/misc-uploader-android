@@ -4,7 +4,10 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.tomcat927.miscuploader.data.db.CleanupAfter
 import com.tomcat927.miscuploader.data.db.HistoryEntity
+import com.tomcat927.miscuploader.data.db.PendingCleanupDao
+import com.tomcat927.miscuploader.data.db.PendingCleanupEntity
 import com.tomcat927.miscuploader.data.db.UploadDao
 import com.tomcat927.miscuploader.data.db.UploadItemEntity
 import com.tomcat927.miscuploader.data.db.UploadState
@@ -31,6 +34,7 @@ import kotlinx.coroutines.withContext
 class UploadRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val dao: UploadDao,
+    private val pendingCleanupDao: PendingCleanupDao,
     private val appScope: CoroutineScope,
     private val logger: AppLogger,
     private val settings: SettingsRepository,
@@ -38,6 +42,11 @@ class UploadRepository @Inject constructor(
 ) {
 
     val items: Flow<List<UploadItemEntity>> = dao.observeAll()
+
+    /** 待清理列表(AI 归档「进待清理」后,上传完成的本地原件) */
+    val pendingCleanup: Flow<List<PendingCleanupEntity>> = pendingCleanupDao.observeAll()
+
+    val pendingCleanupCount: Flow<Int> = pendingCleanupDao.observeCount()
 
     /** 上传历史(A1):sha→最新落点,展示最近 500 条(库存上限一万,自动修剪) */
     val history: Flow<List<HistoryEntity>> = dao.observeRecentHistory(limit = 500)
@@ -70,7 +79,7 @@ class UploadRepository @Inject constructor(
      * 入队并拉起前台服务(拍板 A2:目标目录在入队侧规划——手动模式 = 所选目录,
      * 自动模式 = 按各文件 mtime 的 auto/yyyy/MM;文件夹结构由调用方展开保留)。
      */
-    fun enqueue(tasks: List<UploadTask>) {
+    fun enqueue(tasks: List<UploadTask>, cleanupAfter: Int = CleanupAfter.NONE) {
         if (tasks.isEmpty()) return
         appScope.launch {
             val now = System.currentTimeMillis()
@@ -86,6 +95,7 @@ class UploadRepository @Inject constructor(
                     state = UploadState.PENDING,
                     progress = 0,
                     enqueuedAt = now,
+                    cleanupAfter = cleanupAfter,
                 )
             }
             if (items.isEmpty()) return@launch
@@ -155,6 +165,7 @@ class UploadRepository @Inject constructor(
         entries: List<RootEntry>,
         mode: UploadMode,
         manualTarget: String,
+        cleanupAfter: Int = CleanupAfter.NONE,
     ): Int = withContext(Dispatchers.IO) {
         val cacheDir = File(context.cacheDir, "root").apply { mkdirs() }
         val now = System.currentTimeMillis()
@@ -182,6 +193,7 @@ class UploadRepository @Inject constructor(
                     state = UploadState.PENDING,
                     progress = 0,
                     enqueuedAt = now,
+                    cleanupAfter = cleanupAfter,
                 )
             }.onFailure {
                 logger.log("root", "读取失败：${entry.path}（${it.message}）")
@@ -225,6 +237,57 @@ class UploadRepository @Inject constructor(
     fun clearFinished() {
         appScope.launch { dao.clearFinished() }
     }
+
+    // ---- AI 归档:上传完成后的本地处理 + 待清理列表 ----
+
+    /**
+     * 上传完成后按任务的 [UploadItemEntity.cleanupAfter] 处理本地原件:
+     * IMMEDIATE = 立即软删除到回收站;PENDING = 落「待清理」表;NONE = 不管。
+     */
+    suspend fun afterUploaded(item: UploadItemEntity, remotePath: String, note: String? = null) {
+        when (item.cleanupAfter) {
+            CleanupAfter.IMMEDIATE -> {
+                val n = withContext(Dispatchers.IO) { LocalTrash.moveToTrash(listOf(item.localPath)) }
+                logger.log(
+                    "cleanup",
+                    if (n > 0) "立即清理：「${item.displayName}」已移入回收站" else "立即清理失败：「${item.displayName}」",
+                )
+            }
+
+            CleanupAfter.PENDING -> {
+                pendingCleanupDao.insertAll(
+                    listOf(
+                        PendingCleanupEntity(
+                            localPath = item.localPath,
+                            displayName = item.displayName,
+                            size = item.size,
+                            remotePath = remotePath,
+                            note = note,
+                            addedAt = System.currentTimeMillis(),
+                        ),
+                    ),
+                )
+                logger.log("cleanup", "进入待清理：「${item.displayName}」→ $remotePath")
+            }
+        }
+    }
+
+    /** 待清理:清理选中项(软删除到回收站)并从列表移除;@return 实际清理数 */
+    suspend fun cleanPending(paths: List<String>): Int = withContext(Dispatchers.IO) {
+        if (paths.isEmpty()) return@withContext 0
+        val moved = LocalTrash.moveToTrash(paths)
+        paths.forEach { pendingCleanupDao.deleteByPath(it) }
+        logger.log("cleanup", "待清理：清理 $moved/${paths.size} 项")
+        moved
+    }
+
+    /** 待清理:忽略(仅从列表移除,不动本地文件) */
+    suspend fun dismissPending(paths: List<String>) {
+        paths.forEach { pendingCleanupDao.deleteByPath(it) }
+        logger.log("cleanup", "待清理：忽略 ${paths.size} 项")
+    }
+
+    suspend fun clearPending() = pendingCleanupDao.clear()
 
     // ---- 服务内部使用 ----
 

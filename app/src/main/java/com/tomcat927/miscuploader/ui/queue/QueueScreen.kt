@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
@@ -38,6 +39,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,6 +53,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tomcat927.miscuploader.data.ConnectionManager
 import com.tomcat927.miscuploader.data.UploadRepository
 import com.tomcat927.miscuploader.data.db.HistoryEntity
+import com.tomcat927.miscuploader.data.db.PendingCleanupEntity
 import com.tomcat927.miscuploader.data.db.UploadItemEntity
 import com.tomcat927.miscuploader.data.db.UploadState
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -109,6 +112,22 @@ class QueueViewModel @Inject constructor(
     val history: StateFlow<List<HistoryEntity>> = repository.history
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** 待清理列表(AI 归档「进待清理」后,上传完成的本地原件) */
+    val pendingCleanup: StateFlow<List<PendingCleanupEntity>> = repository.pendingCleanup
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 清理待清理项(软删除到回收站) */
+    fun cleanPending(paths: List<String>) {
+        if (paths.isEmpty()) return
+        viewModelScope.launch { repository.cleanPending(paths) }
+    }
+
+    /** 忽略(仅移出列表,不动本地文件) */
+    fun dismissPending(paths: List<String>) {
+        if (paths.isEmpty()) return
+        viewModelScope.launch { repository.dismissPending(paths) }
+    }
+
     private val _archive = MutableStateFlow(ArchiveUiState())
     val archive: StateFlow<ArchiveUiState> = _archive.asStateFlow()
 
@@ -155,10 +174,11 @@ class QueueViewModel @Inject constructor(
     }
 }
 
-/** 队列页视图(A1):进行中队列 / 上传历史 */
-private enum class QueueView(val label: String) {
-    QUEUE("队列"),
-    HISTORY("历史"),
+/** 队列页视图(A1):进行中队列 / 上传历史 / 待清理(AI 归档) */
+private enum class QueueView(val label: String, val title: String) {
+    QUEUE("队列", "上传队列"),
+    HISTORY("历史", "上传历史"),
+    CLEANUP("待清理", "待清理列表"),
 }
 
 @Composable
@@ -166,6 +186,7 @@ fun QueueScreen(viewModel: QueueViewModel = viewModel()) {
     val items by viewModel.items.collectAsState()
     val queuePaused by viewModel.queuePaused.collectAsState()
     val history by viewModel.history.collectAsState()
+    val pending by viewModel.pendingCleanup.collectAsState()
     val archive by viewModel.archive.collectAsState()
     var view by rememberSaveable { mutableStateOf(QueueView.QUEUE) }
 
@@ -182,7 +203,7 @@ fun QueueScreen(viewModel: QueueViewModel = viewModel()) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                if (view == QueueView.QUEUE) "上传队列" else "上传历史",
+                view.title,
                 style = MaterialTheme.typography.titleLarge,
             )
             Spacer(Modifier.weight(1f))
@@ -196,6 +217,12 @@ fun QueueScreen(viewModel: QueueViewModel = viewModel()) {
                 selected = view == QueueView.HISTORY,
                 onClick = { view = QueueView.HISTORY },
                 label = { Text(QueueView.HISTORY.label) },
+            )
+            Spacer(Modifier.width(8.dp))
+            FilterChip(
+                selected = view == QueueView.CLEANUP,
+                onClick = { view = QueueView.CLEANUP },
+                label = { Text(QueueView.CLEANUP.label) },
             )
         }
         HorizontalDivider()
@@ -217,6 +244,12 @@ fun QueueScreen(viewModel: QueueViewModel = viewModel()) {
             )
 
             QueueView.HISTORY -> HistoryList(history)
+
+            QueueView.CLEANUP -> PendingCleanupList(
+                items = pending,
+                onClean = viewModel::cleanPending,
+                onDismiss = viewModel::dismissPending,
+            )
         }
     }
 }
@@ -366,6 +399,100 @@ private fun HistoryList(history: List<HistoryEntity>) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
         }
     }
+}
+
+/** 待清理列表(AI 归档):上传完成的本地原件,勾选后软删除到回收站,或忽略 */
+@Composable
+private fun PendingCleanupList(
+    items: List<PendingCleanupEntity>,
+    onClean: (List<String>) -> Unit,
+    onDismiss: (List<String>) -> Unit,
+) {
+    var checked by remember(items) { mutableStateOf(items.map { it.localPath }.toSet()) }
+    if (items.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                "待清理列表为空\n用「AI 归档」上传后选「进待清理」，本地原件会出现在这里",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
+        return
+    }
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = { onClean(checked.toList()) }, enabled = checked.isNotEmpty()) {
+                Text("清理选中 ${checked.size} 项")
+            }
+            TextButton(onClick = { onClean(items.map { it.localPath }) }) { Text("全部清理") }
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = { onDismiss(checked.toList()) }, enabled = checked.isNotEmpty()) {
+                Text("忽略选中")
+            }
+        }
+        Text(
+            "共 ${items.size} 项 · 清理 = 软删除到回收站（.misc-trash，可恢复）",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+        )
+        LazyColumn(Modifier.weight(1f)) {
+            items(items, key = { it.id }) { item ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(end = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = item.localPath in checked,
+                        onCheckedChange = { c ->
+                            checked = if (c) checked + item.localPath else checked - item.localPath
+                        },
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            item.displayName,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            "→ ${item.remotePath}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        item.note?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.tertiary,
+                            )
+                        }
+                    }
+                    Text(
+                        formatBytes(item.size),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+            }
+        }
+    }
+}
+
+private fun formatBytes(size: Long): String = when {
+    size >= 1L shl 30 -> "%.1f GB".format(size.toDouble() / (1L shl 30))
+    size >= 1L shl 20 -> "%.1f MB".format(size.toDouble() / (1L shl 20))
+    size >= 1L shl 10 -> "%.0f KB".format(size.toDouble() / (1L shl 10))
+    else -> "$size B"
 }
 
 private val HISTORY_DATE = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA)
