@@ -109,7 +109,7 @@ class AiSuggestTest {
             folderNames = listOf("ai"),
         )
         assertTrue(p.contains("所选文件夹：ai"))
-        assertTrue(p.contains("不要再套一层同名文件夹"))
+        assertTrue(p.contains("不要再多套一层同名文件夹"))
         assertTrue(p.contains("- kelivo.zip"))
     }
 }
