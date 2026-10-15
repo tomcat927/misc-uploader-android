@@ -471,6 +471,8 @@ class HomeViewModel @Inject constructor(
         val maxDepth: Int,
         val imageCount: Int,
         val hasFolder: Boolean,
+        /** 最终落地的完整路径样例(≤[ARCHIVE_SAMPLE_PATHS] 条),弹框里明确展示「传到哪」,避免传错 */
+        val samplePaths: List<String>,
     )
 
     private val _archivePlan = MutableStateFlow<ArchivePlan?>(null)
@@ -541,12 +543,14 @@ class HomeViewModel @Inject constructor(
                 }
                 logger.log("ai", "归档建议原始回复（${raw.length} 字符）：${raw.take(400)}")
                 val target = AiSuggest.parseDir(raw, currentRemote)
+                val base = target.trimEnd('/')
                 _archivePlan.value = ArchivePlan(
                     targetDir = target,
                     fileCount = expanded.names.size,
                     maxDepth = expanded.maxDepth,
                     imageCount = expanded.images.size,
                     hasFolder = expanded.hasFolder,
+                    samplePaths = expanded.names.take(ARCHIVE_SAMPLE_PATHS).map { "$base/$it" },
                 )
                 logger.log("ai", "归档分析完成，用时 ${(System.currentTimeMillis() - startedAt) / 1000}s → $target")
             } catch (e: CancellationException) {
@@ -1217,6 +1221,9 @@ class HomeViewModel @Inject constructor(
 
         /** AI 归档:遍历条目上限(防止超大树卡住;超过则拒绝分析) */
         private const val MAX_ARCHIVE_ENTRIES = 5_000
+
+        /** AI 归档:弹框里展示的最终完整路径样例条数 */
+        private const val ARCHIVE_SAMPLE_PATHS = 5
 
         /** AI 归档:仓库目录树拉取层数(根 + N 层) */
         private const val MAX_REPO_TREE_DEPTH = 2

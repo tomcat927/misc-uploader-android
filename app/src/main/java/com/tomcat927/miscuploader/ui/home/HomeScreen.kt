@@ -1037,7 +1037,8 @@ private fun UploadConfirmDialog(
                 )
                 if (!autoMode) {
                     Text(
-                        "想按 AI 建议落点归档？用文件页底栏的「AI 归档」。",
+                        "文件夹会连同文件夹名一起放进该目录（例：目标 /ai + 文件夹 ai → /ai/ai/…）；" +
+                            "想按 AI 建议落点归档？用文件页底栏的「AI 归档」。",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -1226,11 +1227,30 @@ private fun ArchiveSuggestionDialog(
                     )
 
                     plan != null -> {
-                        Text("建议归档到：", style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            "建议归档目录：",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                         Text(
                             plan.targetDir,
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "上传后的完整路径（共 ${plan.fileCount} 个文件）：",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            plan.samplePaths.joinToString("\n") +
+                                if (plan.fileCount > plan.samplePaths.size) {
+                                    "\n… 等 ${plan.fileCount} 个文件"
+                                } else {
+                                    ""
+                                },
+                            style = MaterialTheme.typography.labelSmall,
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
