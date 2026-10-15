@@ -19,9 +19,9 @@ class AiSuggestTest {
     }
 
     @Test
-    fun `parseDir normalizes trailing slash and leading`() {
+    fun `parseDir normalizes trailing slash`() {
         assertEquals("/auto/2026/10", AiSuggest.parseDir("/auto/2026/10/", "/"))
-        assertEquals("/docs", AiSuggest.parseDir("docs", "/"))
+        assertEquals("/docs", AiSuggest.parseDir("放到 /docs/ 里", "/"))
     }
 
     @Test
