@@ -123,6 +123,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val viewerRequest by viewModel.viewerRequest.collectAsState()
     val archivePlan by viewModel.aiArchivePlan.collectAsState()
     val archiveLoading by viewModel.aiArchiveLoading.collectAsState()
+    val archiveStage by viewModel.aiArchiveStage.collectAsState()
     val archiveError by viewModel.aiArchiveError.collectAsState()
     val trash by viewModel.trash.collectAsState()
     val trashError by viewModel.trashError.collectAsState()
@@ -352,6 +353,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
         ArchiveSuggestionDialog(
             plan = archivePlan,
             loading = archiveLoading,
+            stage = archiveStage,
             error = archiveError,
             onAdopt = { cleanupAfter ->
                 viewModel.adoptArchive(cleanupAfter)
@@ -626,6 +628,13 @@ private fun BrowserPane(
                             Spacer(Modifier.width(4.dp))
                             Text("上传")
                         }
+                        onAiArchive?.let { archive ->
+                            TextButton(onClick = archive, enabled = selected.isNotEmpty()) {
+                                Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("AI 归档", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
                         TextButton(
                             onClick = onDeleteSelection,
                             enabled = selected.isNotEmpty(),
@@ -653,13 +662,6 @@ private fun BrowserPane(
                     Icon(Icons.Filled.CreateNewFolder, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("新建文件夹", style = MaterialTheme.typography.labelMedium)
-                }
-                onAiArchive?.let { archive ->
-                    TextButton(onClick = archive) {
-                        Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("AI 归档", style = MaterialTheme.typography.labelMedium)
-                    }
                 }
                 Spacer(Modifier.weight(1f))
                 val dirs = state.entries.count { it.isDir }
@@ -1199,6 +1201,7 @@ private fun DeleteConfirmDialog(paths: List<String>, onConfirm: () -> Unit, onDi
 private fun ArchiveSuggestionDialog(
     plan: HomeViewModel.ArchivePlan?,
     loading: Boolean,
+    stage: String?,
     error: String?,
     onAdopt: (Int) -> Unit,
     onDismiss: () -> Unit,
@@ -1213,7 +1216,7 @@ private fun ArchiveSuggestionDialog(
                     loading -> Row(verticalAlignment = Alignment.CenterVertically) {
                         CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(8.dp))
-                        Text("正在分析…", style = MaterialTheme.typography.bodySmall)
+                        Text(stage ?: "正在分析…", style = MaterialTheme.typography.bodySmall)
                     }
 
                     error != null -> Text(
@@ -1254,6 +1257,12 @@ private fun ArchiveSuggestionDialog(
                             Text("立即清理（移入回收站，可恢复）", style = MaterialTheme.typography.bodySmall)
                         }
                     }
+
+                    else -> Text(
+                        "请先在左栏长按选中要归档的文件或文件夹",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         },

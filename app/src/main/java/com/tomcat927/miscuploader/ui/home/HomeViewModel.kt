@@ -479,6 +479,10 @@ class HomeViewModel @Inject constructor(
     private val _archiveLoading = MutableStateFlow(false)
     val aiArchiveLoading: StateFlow<Boolean> = _archiveLoading.asStateFlow()
 
+    /** 当前阶段文案(分析本地内容 / 读取仓库目录 / AI 分析中),给弹框做进度提示 */
+    private val _archiveStage = MutableStateFlow<String?>(null)
+    val aiArchiveStage: StateFlow<String?> = _archiveStage.asStateFlow()
+
     private val _archiveError = MutableStateFlow<String?>(null)
     val aiArchiveError: StateFlow<String?> = _archiveError.asStateFlow()
 
@@ -486,16 +490,21 @@ class HomeViewModel @Inject constructor(
         _archivePlan.value = null
         _archiveError.value = null
         _archiveLoading.value = false
+        _archiveStage.value = null
     }
 
     /** 让 AI 分析所选文件/文件夹(递归 ≤ MAX_ARCHIVE_DEPTH 层)并给出仓库落点建议 */
     fun requestArchiveSuggestion() {
         val selected = _selectedLeft.value
-        if (selected.isEmpty()) return
+        if (selected.isEmpty()) {
+            _archiveError.value = "请先在左栏长按选中要归档的文件或文件夹"
+            return
+        }
         viewModelScope.launch {
             _archiveLoading.value = true
             _archivePlan.value = null
             _archiveError.value = null
+            val startedAt = System.currentTimeMillis()
             try {
                 if (!settings.aiStoredConfigFlow.first().enabled) {
                     throw IllegalStateException("AI 助手未启用（设置 → AI 助手）")
@@ -506,9 +515,18 @@ class HomeViewModel @Inject constructor(
                 val client = connection.clientOrNull()
                     ?: throw IllegalStateException("未连接——请到「设置」连接服务器")
                 val localDir = _left.value.path
+                logger.log("ai", "归档分析开始：选中 ${selected.size} 项，目录=$localDir")
+                _archiveStage.value = "分析本地内容…"
                 val expanded = withContext(Dispatchers.IO) { expandSelection(localDir, selected.toList()) }
+                logger.log(
+                    "ai",
+                    "归档分析：展开 ${expanded.names.size} 个文件，最深 ${expanded.maxDepth} 层，附图 ${expanded.images.size} 张",
+                )
+                _archiveStage.value = "读取仓库目录…"
                 val currentRemote = _right.value.path
                 val repoDirs = remoteDirTree(client)
+                logger.log("ai", "归档分析：仓库候选目录 ${repoDirs.size} 个")
+                _archiveStage.value = "AI 分析中…"
                 val ai = AiClient(cfg.baseUrl, cfg.apiKey, okHttpClient) { logger.log("ai", it) }
                 val prompt = AiSuggest.prompt(
                     (repoDirs + currentRemote).distinct(),
@@ -522,19 +540,23 @@ class HomeViewModel @Inject constructor(
                     ai.chatVision(cfg.model, prompt, expanded.images, AiSuggest.SYSTEM_PROMPT)
                 }
                 logger.log("ai", "归档建议原始回复（${raw.length} 字符）：${raw.take(400)}")
+                val target = AiSuggest.parseDir(raw, currentRemote)
                 _archivePlan.value = ArchivePlan(
-                    targetDir = AiSuggest.parseDir(raw, currentRemote),
+                    targetDir = target,
                     fileCount = expanded.names.size,
                     maxDepth = expanded.maxDepth,
                     imageCount = expanded.images.size,
                     hasFolder = expanded.hasFolder,
                 )
+                logger.log("ai", "归档分析完成，用时 ${(System.currentTimeMillis() - startedAt) / 1000}s → $target")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                logger.log("ai", "归档分析失败：${e.message ?: e.javaClass.simpleName}")
                 _archiveError.value = e.message ?: e.javaClass.simpleName
             } finally {
                 _archiveLoading.value = false
+                _archiveStage.value = null
             }
         }
     }
@@ -564,6 +586,7 @@ class HomeViewModel @Inject constructor(
         val images = mutableListOf<AiImage>()
         var maxDepth = 0
         var hasFolder = false
+        var visited = 0
         roots.forEach { name ->
             val f = File(joinPath(baseDir, name))
             when {
@@ -576,6 +599,9 @@ class HomeViewModel @Inject constructor(
                 f.isDirectory -> {
                     hasFolder = true
                     f.walkTopDown().forEach { child ->
+                        if (++visited > MAX_ARCHIVE_ENTRIES) {
+                            throw ArchiveRejected("内容过多（超过 $MAX_ARCHIVE_ENTRIES 个条目），已拒绝分析")
+                        }
                         val rel = child.relativeTo(f).path
                         if (rel.isEmpty()) return@forEach
                         val depth = rel.count { it == '/' } + 1
@@ -1188,6 +1214,9 @@ class HomeViewModel @Inject constructor(
 
         /** AI 归档:最多分析的文件数(超过则拒绝分析) */
         private const val MAX_ARCHIVE_FILES = 200
+
+        /** AI 归档:遍历条目上限(防止超大树卡住;超过则拒绝分析) */
+        private const val MAX_ARCHIVE_ENTRIES = 5_000
 
         /** AI 归档:仓库目录树拉取层数(根 + N 层) */
         private const val MAX_REPO_TREE_DEPTH = 2
