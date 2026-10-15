@@ -110,7 +110,7 @@ class AiClient(
         return chat(model, messages)
     }
 
-    /** 多模态能力探针:发一张 1×1 图,能拿到文本回复即视为该模型接受图片输入 */
+    /** 多模态能力探针:发一张 64×64 纯色 PNG,能拿到文本回复即视为该模型接受图片输入 */
     suspend fun verifyVision(model: String): String =
         chatVision(model, PROBE_PROMPT, listOf(AiImage(PROBE_PNG_BASE64, "image/png")))
 
@@ -169,9 +169,13 @@ class AiClient(
     companion object {
         private val JSON_MEDIA = "application/json".toMediaType()
 
-        /** 1×1 透明 PNG(探针用;极小体积,任何视觉模型都能收) */
+        /**
+         * 探针用 64×64 纯红 PNG(RGBA, 332 字符)。
+         * 注意:不能用「1×1 灰度+透明(colortype 4)」那类极简 PNG——部分后端(如 SenseNova)
+         * 会直接报 400 invalid image base64 content;标准 RGBA PNG 才稳。
+         */
         const val PROBE_PNG_BASE64 =
-            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+            "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAACMSURBVHhe7dAhAQAADITA7196K0ADEGeQ7LYzawBFkwZQNGkARZMGUDRpAEWTBlA0aQBFkwZQNGkARZMGUDRpAEWTBlA0aQBFkwZQNGkARZMGUDRpAEWTBlA0aQBFkwZQNGkARZMGUDRpAEWTBlA0aQBFkwZQNGkARZMGUDRpAEWTBlA0aQBFE/mA3QNDiOHS/086WQAAAABJRU5ErkJggg=="
 
         private const val PROBE_PROMPT = "这张图片是什么颜色？只回一个词。"
 

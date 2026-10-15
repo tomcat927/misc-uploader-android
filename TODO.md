@@ -80,6 +80,8 @@
 
 **回收站实测清单**: ① 删 `/DCIM/Camera/A.jpg` → 顶栏回收站 → 列表显示 `DCIM/Camera/A.jpg` 与批次时间 → 「恢复选中」→ 回到 `/DCIM/Camera/`;② 恢复时原位已有同名 → 报「失败(同名或已缺失)」不覆盖;③ 「清空」→ 二次确认 → `.misc-trash` 清空;④ 空批次(全部恢复后)不再显示
 
+**修复(2026-10-15,三)——「验证多模态」报 400**: 现象 `HTTP 400 {"error":{"message":"invalid image base64 content"}}`。**根因**: 探针用的 **1×1 灰度+透明 PNG(colortype 4)** 被后端拒绝(与体积无关)。**已对真实端点实测**确认: 1×1 灰度 PNG → 400;标准 **RGBA** PNG(1×1 至 64×64 均可)与 JPEG → 200;不带 `data:image/...;base64,` 前缀的裸 base64 → 400。**修复**: `PROBE_PNG_BASE64` 换成 64×64 纯红 RGBA PNG。**教训**: 探针图片必须用标准 RGBA/真彩 PNG,别用极简灰度 PNG。
+
 ## 待办 — 开发队列(按推荐顺序)
 
 1. ~~A1 SHA-256 去重 + 上传历史~~ ✅ 2026-10-04: 内容级去重(同内容任意目录跳过+提示已有路径,PUT 前流式 hash/「校验中」状态)、Room upload_history(sha→最新落点,上限一万自动修剪)、队列页「历史」chip;DB v1→v2 Migration;**顺带修 M3 队列排序 bug(partition 解构颠倒)**——真机实测见下节
