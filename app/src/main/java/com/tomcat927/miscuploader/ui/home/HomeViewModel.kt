@@ -488,21 +488,39 @@ class HomeViewModel @Inject constructor(
     private val _archiveError = MutableStateFlow<String?>(null)
     val aiArchiveError: StateFlow<String?> = _archiveError.asStateFlow()
 
-    fun dismissArchive() {
-        _archivePlan.value = null
-        _archiveError.value = null
-        _archiveLoading.value = false
-        _archiveStage.value = null
+    /** 归档弹框是否可见(与后台分析解耦:关掉弹框分析照跑,结果保留) */
+    private val _archiveOpen = MutableStateFlow(false)
+    val aiArchiveOpen: StateFlow<Boolean> = _archiveOpen.asStateFlow()
+
+    /** 进行中的归档分析(可取消;关闭弹框不取消) */
+    private var archiveJob: Job? = null
+
+    /** 关闭弹框(仅 UI):分析在后台继续,结果保留,再点「AI 归档」即可查看 */
+    fun closeArchiveDialog() {
+        _archiveOpen.value = false
     }
 
-    /** 让 AI 分析所选文件/文件夹(递归 ≤ MAX_ARCHIVE_DEPTH 层)并给出仓库落点建议 */
+    /** 显式取消进行中的分析 */
+    fun cancelArchive() {
+        archiveJob?.cancel()
+        archiveJob = null
+        _archiveOpen.value = false
+        _archiveLoading.value = false
+        _archiveStage.value = null
+        logger.log("ai", "归档分析已取消")
+    }
+
+    /** 打开弹框并(必要时)发起分析:已在分析 / 已有建议时只打开弹框,不重复请求 */
     fun requestArchiveSuggestion() {
+        _archiveOpen.value = true
+        if (archiveJob?.isActive == true) return
+        if (_archivePlan.value != null) return
         val selected = _selectedLeft.value
         if (selected.isEmpty()) {
             _archiveError.value = "请先在左栏长按选中要归档的文件或文件夹"
             return
         }
-        viewModelScope.launch {
+        archiveJob = viewModelScope.launch {
             _archiveLoading.value = true
             _archivePlan.value = null
             _archiveError.value = null
@@ -554,11 +572,14 @@ class HomeViewModel @Inject constructor(
                     samplePaths = expanded.names.take(ARCHIVE_SAMPLE_PATHS).map { "$base/$it" },
                 )
                 logger.log("ai", "归档分析完成，用时 ${(System.currentTimeMillis() - startedAt) / 1000}s → $target")
+                if (!_archiveOpen.value) events.emit("AI 归档建议已就绪（点底栏「AI 归档」查看）")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                logger.log("ai", "归档分析失败：${e.message ?: e.javaClass.simpleName}")
-                _archiveError.value = e.message ?: e.javaClass.simpleName
+                val msg = e.message ?: e.javaClass.simpleName
+                logger.log("ai", "归档分析失败：$msg")
+                _archiveError.value = msg
+                if (!_archiveOpen.value) events.emit("AI 归档分析失败：$msg")
             } finally {
                 _archiveLoading.value = false
                 _archiveStage.value = null
@@ -570,6 +591,7 @@ class HomeViewModel @Inject constructor(
     fun adoptArchive(cleanupAfter: Int) {
         val plan = _archivePlan.value ?: return
         _archivePlan.value = null
+        _archiveOpen.value = false
         uploadSelected(plan.targetDir, cleanupAfter)
     }
 

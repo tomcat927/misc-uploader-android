@@ -125,6 +125,7 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     val archiveLoading by viewModel.aiArchiveLoading.collectAsState()
     val archiveStage by viewModel.aiArchiveStage.collectAsState()
     val archiveError by viewModel.aiArchiveError.collectAsState()
+    val archiveOpen by viewModel.aiArchiveOpen.collectAsState()
     val trash by viewModel.trash.collectAsState()
     val trashError by viewModel.trashError.collectAsState()
     val context = LocalContext.current
@@ -135,7 +136,6 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
     var remoteMovePicker by remember { mutableStateOf(false) }
     var remoteDeleteConfirm by remember { mutableStateOf(false) }
     var localDeleteConfirm by remember { mutableStateOf(false) }
-    var archiveOpen by remember { mutableStateOf(false) }
     var trashOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -205,9 +205,10 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
                 onMoveSelection = {},
                 onDeleteSelection = { localDeleteConfirm = true },
                 onAiArchive = {
-                    archiveOpen = true
                     viewModel.requestArchiveSuggestion()
                 },
+                aiArchiveLoading = archiveLoading,
+                aiArchiveReady = archivePlan != null,
                 onOpenTrash = {
                     trashOpen = true
                     viewModel.openTrash()
@@ -355,14 +356,9 @@ fun HomeScreen(viewModel: HomeViewModel = viewModel()) {
             loading = archiveLoading,
             stage = archiveStage,
             error = archiveError,
-            onAdopt = { cleanupAfter ->
-                viewModel.adoptArchive(cleanupAfter)
-                archiveOpen = false
-            },
-            onDismiss = {
-                archiveOpen = false
-                viewModel.dismissArchive()
-            },
+            onAdopt = { cleanupAfter -> viewModel.adoptArchive(cleanupAfter) },
+            onCancel = { viewModel.cancelArchive() },
+            onDismiss = { viewModel.closeArchiveDialog() },
         )
     }
 
@@ -450,6 +446,10 @@ private fun BrowserPane(
     onDeleteSelection: () -> Unit,
     /** AI 归档入口(仅本地栏传入;null 不显示) */
     onAiArchive: (() -> Unit)?,
+    /** AI 归档:分析中(按钮显示转圈) */
+    aiArchiveLoading: Boolean = false,
+    /** AI 归档:建议已就绪(按钮提示可查看) */
+    aiArchiveReady: Boolean = false,
     /** 回收站入口(仅本地栏传入;null 不显示) */
     onOpenTrash: (() -> Unit)?,
     onCancelSelection: () -> Unit,
@@ -630,9 +630,24 @@ private fun BrowserPane(
                         }
                         onAiArchive?.let { archive ->
                             TextButton(onClick = archive, enabled = selected.isNotEmpty()) {
-                                Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                                if (aiArchiveLoading) {
+                                    CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                                } else {
+                                    Icon(
+                                        Icons.Filled.AutoAwesome,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
                                 Spacer(Modifier.width(4.dp))
-                                Text("AI 归档", style = MaterialTheme.typography.labelMedium)
+                                Text(
+                                    when {
+                                        aiArchiveLoading -> "分析中…"
+                                        aiArchiveReady -> "AI 归档 · 建议就绪"
+                                        else -> "AI 归档"
+                                    },
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
                             }
                         }
                         TextButton(
@@ -1205,6 +1220,7 @@ private fun ArchiveSuggestionDialog(
     stage: String?,
     error: String?,
     onAdopt: (Int) -> Unit,
+    onCancel: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var cleanupAfter by remember(plan) { mutableStateOf(CleanupAfter.PENDING) }
@@ -1214,10 +1230,18 @@ private fun ArchiveSuggestionDialog(
         text = {
             Column {
                 when {
-                    loading -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp))
-                        Text(stage ?: "正在分析…", style = MaterialTheme.typography.bodySmall)
+                    loading -> Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text(stage ?: "正在分析…", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "可点空白处关闭，分析会在后台继续；完成后点底栏「AI 归档」查看。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
 
                     error != null -> Text(
@@ -1287,12 +1311,13 @@ private fun ArchiveSuggestionDialog(
             }
         },
         confirmButton = {
-            TextButton(
-                onClick = { onAdopt(cleanupAfter) },
-                enabled = !loading && plan != null,
-            ) { Text("采纳并上传") }
+            if (loading) {
+                TextButton(onClick = onCancel) { Text("取消分析", color = MaterialTheme.colorScheme.error) }
+            } else {
+                TextButton(onClick = { onAdopt(cleanupAfter) }, enabled = plan != null) { Text("采纳并上传") }
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(if (loading) "后台运行" else "关闭") } },
     )
 }
 
