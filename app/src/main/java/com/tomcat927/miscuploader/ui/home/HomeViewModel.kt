@@ -443,7 +443,7 @@ class HomeViewModel @Inject constructor(
                 events.emit("没有可上传的文件")
                 return@launch
             }
-            uploadRepository.enqueue(tasks)
+            uploadRepository.enqueue(tasks, cleanupAfter)
             _selectedLeft.value = emptySet()
             events.emit("已加入队列：${tasks.size} 个文件")
         }
@@ -950,7 +950,7 @@ class HomeViewModel @Inject constructor(
                             )
                         }
                     }
-            uploadRepository.enqueue(tasks, cleanupAfter)
+            uploadRepository.enqueue(tasks)
                     closeSearch()
                     events.emit("已加入队列：${tasks.size} 个文件")
                 }
