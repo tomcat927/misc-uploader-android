@@ -535,6 +535,7 @@ class HomeViewModel @Inject constructor(
                     currentRemote,
                     expanded.names,
                     expanded.hasFolder,
+                    expanded.folderNames,
                 )
                 val raw = if (expanded.images.isEmpty()) {
                     ai.chatText(cfg.model, prompt, AiSuggest.SYSTEM_PROMPT)
@@ -579,15 +580,18 @@ class HomeViewModel @Inject constructor(
         val images: List<AiImage>,
         val maxDepth: Int,
         val hasFolder: Boolean,
+        val folderNames: List<String>,
     )
 
     /**
-     * 展开所选内容:文件直接用文件名;文件夹递归展开(名字带所选文件夹前缀)。
+     * 展开所选内容:文件直接用文件名;文件夹递归展开为**其内容**(相对所选文件夹的路径,
+     * 不带所选文件夹名前缀——拍板 2026-10-15:内容直接放进 AI 给出的目标目录,不再多套一层)。
      * 层级超过 [MAX_ARCHIVE_DEPTH] 或文件数超过 [MAX_ARCHIVE_FILES] → 抛 [ArchiveRejected](拒绝分析)。
      */
     private fun expandSelection(baseDir: String, roots: List<String>): ExpandedSelection {
         val names = mutableListOf<String>()
         val images = mutableListOf<AiImage>()
+        val folderNames = mutableListOf<String>()
         var maxDepth = 0
         var hasFolder = false
         var visited = 0
@@ -602,6 +606,7 @@ class HomeViewModel @Inject constructor(
 
                 f.isDirectory -> {
                     hasFolder = true
+                    folderNames += name
                     f.walkTopDown().forEach { child ->
                         if (++visited > MAX_ARCHIVE_ENTRIES) {
                             throw ArchiveRejected("内容过多（超过 $MAX_ARCHIVE_ENTRIES 个条目），已拒绝分析")
@@ -617,13 +622,13 @@ class HomeViewModel @Inject constructor(
                             throw ArchiveRejected("内容超过 $MAX_ARCHIVE_FILES 个文件，已拒绝分析")
                         }
                         maxDepth = maxOf(maxDepth, depth)
-                        names += "$name/$rel"
+                        names += rel
                         collectThumb(child, child.name, images)
                     }
                 }
             }
         }
-        return ExpandedSelection(names, images, maxDepth, hasFolder)
+        return ExpandedSelection(names, images, maxDepth, hasFolder, folderNames)
     }
 
     private fun collectThumb(file: File, name: String, out: MutableList<AiImage>) {

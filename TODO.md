@@ -100,6 +100,10 @@
 
 **完整路径显示实测**: ① AI 归档弹框能看到每个文件最终完整路径;② 文件夹多文件时列 5 条 + 「… 等 N 个」;③ 手动上传确认框有同名叠加说明
 
+**改语义(2026-10-15,七)——文件夹按「内容」展开,不再叠加文件夹名**: 用户拍板(承接上条:`/ai` + 文件夹 `ai` → `/ai/ai/…` 多一层)。**改动**: ① `expandSelection` 文件夹展开改用 `child.relativeTo(f).path`(不再 `"$name/$rel"`)→ 内容直接落进 AI 给的目标目录(例:选 `ai`、AI 给 `/ai` → `/ai/里面的文件`);② `ExpandedSelection` 增 `folderNames`,提示词新增「所选文件夹：ai」+「文件夹的内容会直接放进你给出的目录,不要再多套一层同名文件夹」(SYSTEM_PROMPT 同步加一句);③ 单测补 `prompt carries selected folder names and no-extra-layer rule`;④ 文档 AI-ASSISTANT 同步。
+
+**新语义实测**: ① 选文件夹 `ai`(内含 1 个 zip)、AI 给 `/ai` → 弹框「完整路径」显示 `/ai/kelivo_….zip`(不再 `/ai/ai/…`);② 选文件夹含子目录 → 子目录结构保留(`/目标/子目录/文件`);③ 多文件夹同时选中 → 内容合并进同一目标目录(注意同名会互相覆盖)
+
 ## 待办 — 开发队列(按推荐顺序)
 
 1. ~~A1 SHA-256 去重 + 上传历史~~ ✅ 2026-10-04: 内容级去重(同内容任意目录跳过+提示已有路径,PUT 前流式 hash/「校验中」状态)、Room upload_history(sha→最新落点,上限一万自动修剪)、队列页「历史」chip;DB v1→v2 Migration;**顺带修 M3 队列排序 bug(partition 解构颠倒)**——真机实测见下节

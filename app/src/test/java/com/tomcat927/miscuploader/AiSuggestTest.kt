@@ -98,4 +98,18 @@ class AiSuggestTest {
         assertTrue(p.contains("当前所在目录：/"))
         assertTrue(p.contains("- IMG_1.jpg"))
     }
+
+    @Test
+    fun `prompt carries selected folder names and no-extra-layer rule`() {
+        val p = AiSuggest.prompt(
+            existingDirs = listOf("/ai"),
+            currentRemoteDir = "/",
+            itemNames = listOf("kelivo.zip"),
+            hasFolder = true,
+            folderNames = listOf("ai"),
+        )
+        assertTrue(p.contains("所选文件夹：ai"))
+        assertTrue(p.contains("不要再套一层同名文件夹"))
+        assertTrue(p.contains("- kelivo.zip"))
+    }
 }

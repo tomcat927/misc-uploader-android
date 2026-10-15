@@ -12,17 +12,22 @@ object AiSuggest {
     /** 归档建议:送给模型的内容名上限 */
     private const val MAX_PROMPT_NAMES = 120
 
+    /** 归档建议:送给模型的所选文件夹名上限 */
+    private const val MAX_PROMPT_FOLDER_NAMES = 20
+
     const val SYSTEM_PROMPT =
         "你是文件归档助手。根据文件名、图片内容和仓库已有目录结构，判断这些内容最适合归档到仓库的哪个目录。" +
             "优先沿用已有目录；没有合适的可新建一个简洁的子目录。" +
+            "所选文件夹的内容会直接放入你给出的目录，不要再多套一层文件夹名。" +
             "只回复一个以 / 开头的目录路径，不要任何解释、不要引号、不要多余文字。"
 
-    /** 归档建议提示词:给出仓库已有目录(供沿用)+ 当前目录 + 待归档内容(文件夹已展开) */
+    /** 归档建议提示词:给出仓库已有目录(供沿用)+ 当前目录 + 待归档内容(文件夹已展开为内容) */
     fun prompt(
         existingDirs: List<String>,
         currentRemoteDir: String,
         itemNames: List<String>,
         hasFolder: Boolean = false,
+        folderNames: List<String> = emptyList(),
     ): String = buildString {
         appendLine("仓库已有目录（供参考，尽量沿用）：")
         if (existingDirs.isEmpty()) {
@@ -31,6 +36,10 @@ object AiSuggest {
             existingDirs.take(MAX_PROMPT_DIRS).forEach { appendLine("- $it") }
         }
         appendLine("当前所在目录：$currentRemoteDir")
+        if (folderNames.isNotEmpty()) {
+            appendLine("所选文件夹：${folderNames.take(MAX_PROMPT_FOLDER_NAMES).joinToString("、")}")
+            appendLine("（文件夹的内容会直接放进你给出的目录，不要再多套一层同名文件夹）")
+        }
         appendLine(if (hasFolder) "待归档内容（含文件夹，已展开）：" else "待归档文件：")
         itemNames.take(MAX_PROMPT_NAMES).forEach { appendLine("- $it") }
         appendLine("请只回复一个目录路径（以 / 开头）。可沿用当前目录，或用已有目录，或新建一个子目录。")
