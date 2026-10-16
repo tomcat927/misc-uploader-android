@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -110,9 +111,18 @@ fun AiScreen(
                 item { Spacer(Modifier.size(8.dp)) }
             }
 
+            state.pendingAction?.let { pa ->
+                ConfirmCard(
+                    action = pa,
+                    onApprove = viewModel::approveAction,
+                    onReject = viewModel::rejectAction,
+                )
+            }
+
             InputBar(
                 value = input,
                 busy = state.busy,
+                sendEnabled = state.pendingAction == null,
                 onValueChange = { input = it },
                 onSend = {
                     viewModel.send(input)
@@ -247,9 +257,33 @@ private fun ErrorCard(message: String, onDismiss: () -> Unit) {
 }
 
 @Composable
+private fun ConfirmCard(action: PendingAction, onApprove: () -> Unit, onReject: () -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("需要你确认：${action.title}", style = MaterialTheme.typography.titleSmall)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                action.lines.forEach { line ->
+                    Text(line, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onApprove) { Text("执行") }
+                TextButton(onClick = onReject) { Text("跳过") }
+            }
+        }
+    }
+}
+
+@Composable
 private fun InputBar(
     value: String,
     busy: Boolean,
+    sendEnabled: Boolean,
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
     onCancel: () -> Unit,
@@ -272,7 +306,7 @@ private fun InputBar(
             if (busy) {
                 TextButton(onClick = onCancel) { Text("停止") }
             } else {
-                IconButton(onClick = onSend, enabled = value.isNotBlank()) {
+                IconButton(onClick = onSend, enabled = sendEnabled && value.isNotBlank()) {
                     Icon(Icons.Filled.Send, contentDescription = "发送")
                 }
             }

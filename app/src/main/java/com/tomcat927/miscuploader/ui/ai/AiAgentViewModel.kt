@@ -4,10 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tomcat927.miscuploader.core.AiClient
 import com.tomcat927.miscuploader.core.AiMessage
+import com.tomcat927.miscuploader.core.AiToolCall
 import com.tomcat927.miscuploader.core.AiTools
+import com.tomcat927.miscuploader.core.optString
+import com.tomcat927.miscuploader.core.optStringList
 import com.tomcat927.miscuploader.data.AiToolRunner
 import com.tomcat927.miscuploader.data.AppLogger
 import com.tomcat927.miscuploader.data.SettingsRepository
+import com.tomcat927.miscuploader.data.ToolOutcome
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -22,16 +26,26 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
+/** 待用户确认的动作工具调用 */
+data class PendingAction(
+    val id: String,
+    val title: String,
+    val lines: List<String>,
+)
+
 data class AiChatUiState(
     val messages: List<AiMessage> = emptyList(),
     val busy: Boolean = false,
     val stage: String? = null,
     val error: String? = null,
+    /** 非空 = 有一个动作工具待用户确认(确认前循环暂停) */
+    val pendingAction: PendingAction? = null,
 )
 
 /**
  * AI 助手会话式 agent(拍板 2026-10-16)。
- * P3:单会话 + 只读工具后台自动执行;动作工具与多会话持久化在 P4/P5 接入。
+ * 只读工具后台自动执行;动作工具(enqueue_upload/trash_local)暂停循环等用户确认后再执行。
+ * P4:动作工具 + 确认;多会话持久化在 P5。
  */
 @HiltViewModel
 class AiAgentViewModel @Inject constructor(
@@ -48,66 +62,68 @@ class AiAgentViewModel @Inject constructor(
     val aiEnabled: StateFlow<Boolean> = settings.aiEnabledFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
-    /** 会话消息(送给模型 + 用于展示) */
     private var history: List<AiMessage> = emptyList()
+
+    /** 已由模型发起、尚未回填结果的工具调用(动作工具在此排队等确认) */
+    private var pendingToolCalls: List<AiToolCall> = emptyList()
+    private var sessionClient: AiClient? = null
+    private var sessionModel: String? = null
     private var job: Job? = null
 
-    /** 发送一条用户消息并跑 agent 循环 */
     fun send(text: String) {
         val t = text.trim()
-        if (t.isEmpty() || job?.isActive == true) return
+        if (t.isEmpty() || job?.isActive == true || _state.value.pendingAction != null) return
         history = history + AiMessage(role = "user", text = t)
         publish()
         job = viewModelScope.launch {
             _state.update { it.copy(busy = true, error = null, stage = "思考中…") }
             try {
-                val stored = settings.aiStoredConfigFlow.first()
-                if (!stored.enabled) throw IllegalStateException("AI 助手未启用（设置 → AI 助手）")
-                val cfg = settings.loadAiDecryptedOnce()
-                    ?: throw IllegalStateException("未配置 AI 助手（设置 → AI 助手）")
-                if (cfg.model.isBlank()) throw IllegalStateException("未选择 AI 模型（设置 → AI 助手）")
-                val client = AiClient(cfg.baseUrl, cfg.apiKey, okHttpClient) { logger.log("ai", it) }
-                val tools = AiTools.all
-                    .filter { it.kind == AiTools.Kind.READ_ONLY }
-                    .map { it.tool }
-
-                var iter = 0
-                while (iter++ < MAX_ITERS) {
-                    val result = client.chatWithTools(cfg.model, historyForRequest(), tools, SYSTEM_PROMPT)
-                    history = history + AiMessage(
-                        role = "assistant",
-                        text = result.text,
-                        toolCalls = result.toolCalls,
-                    )
-                    publish()
-                    if (result.toolCalls.isEmpty()) break
-                    _state.update { it.copy(stage = "调用工具…") }
-                    result.toolCalls.forEach { tc ->
-                        val spec = AiTools.spec(tc.name)
-                        if (spec == null || spec.kind != AiTools.Kind.READ_ONLY) {
-                            history = history + AiMessage(
-                                role = "tool",
-                                text = "错误：工具 ${tc.name} 不可用。",
-                                toolCallId = tc.id,
-                            )
-                        } else {
-                            logger.log("ai", "调用工具 ${tc.name}(${tc.arguments.take(200)})")
-                            val outcome = runner.run(tc)
-                            history = history + AiMessage(role = "tool", text = outcome.text, toolCallId = tc.id)
-                            if (outcome.images.isNotEmpty()) {
-                                history = history + AiMessage(role = "user", text = null, images = outcome.images)
-                            }
-                        }
-                    }
-                    publish()
-                    _state.update { it.copy(stage = "思考中…") }
-                }
+                if (prepareSession()) drive()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                val msg = e.message ?: e.javaClass.simpleName
-                logger.log("ai", "AI 助手对话失败：$msg")
-                _state.update { it.copy(error = msg) }
+                onError(e)
+            } finally {
+                _state.update { it.copy(busy = false, stage = null) }
+            }
+        }
+    }
+
+    /** 用户确认执行当前待确认动作 */
+    fun approveAction() {
+        val tc = pendingToolCalls.firstOrNull() ?: return
+        _state.update { it.copy(pendingAction = null, busy = true, stage = "执行中…") }
+        job = viewModelScope.launch {
+            try {
+                logger.log("ai", "用户确认动作 ${tc.name}")
+                val outcome = runner.run(tc)
+                pendingToolCalls = pendingToolCalls.drop(1)
+                appendToolResult(tc, outcome)
+                drive()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError(e)
+            } finally {
+                _state.update { it.copy(busy = false, stage = null) }
+            }
+        }
+    }
+
+    /** 用户拒绝当前待确认动作:回填「已拒绝」并继续循环 */
+    fun rejectAction() {
+        val tc = pendingToolCalls.firstOrNull() ?: return
+        _state.update { it.copy(pendingAction = null, busy = true, stage = null) }
+        job = viewModelScope.launch {
+            try {
+                logger.log("ai", "用户拒绝动作 ${tc.name}")
+                pendingToolCalls = pendingToolCalls.drop(1)
+                appendToolResult(tc, ToolOutcome("用户拒绝执行该操作。"))
+                drive()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError(e)
             } finally {
                 _state.update { it.copy(busy = false, stage = null) }
             }
@@ -118,7 +134,8 @@ class AiAgentViewModel @Inject constructor(
     fun cancel() {
         job?.cancel()
         job = null
-        _state.update { it.copy(busy = false, stage = null) }
+        pendingToolCalls = emptyList()
+        _state.update { it.copy(busy = false, stage = null, pendingAction = null) }
     }
 
     /** 清空当前会话 */
@@ -126,11 +143,113 @@ class AiAgentViewModel @Inject constructor(
         job?.cancel()
         job = null
         history = emptyList()
+        pendingToolCalls = emptyList()
+        sessionClient = null
+        sessionModel = null
         _state.update { AiChatUiState() }
     }
 
     fun dismissError() {
         _state.update { it.copy(error = null) }
+    }
+
+    // ---- 内部 ----
+
+    private suspend fun prepareSession(): Boolean {
+        val stored = settings.aiStoredConfigFlow.first()
+        if (!stored.enabled) {
+            onError(IllegalStateException("AI 助手未启用（设置 → AI 助手）"))
+            return false
+        }
+        val cfg = settings.loadAiDecryptedOnce()
+        if (cfg == null) {
+            onError(IllegalStateException("未配置 AI 助手（设置 → AI 助手）"))
+            return false
+        }
+        if (cfg.model.isBlank()) {
+            onError(IllegalStateException("未选择 AI 模型（设置 → AI 助手）"))
+            return false
+        }
+        sessionClient = AiClient(cfg.baseUrl, cfg.apiKey, okHttpClient) { logger.log("ai", it) }
+        sessionModel = cfg.model
+        return true
+    }
+
+    /** agent 主循环:回填工具结果 → 请求模型 → 遇动作工具暂停等确认,直到模型给出最终答复 */
+    private suspend fun drive() {
+        val client = sessionClient ?: return
+        val model = sessionModel ?: return
+        val tools = AiTools.toolDefs()
+        var turns = 0
+        while (turns++ < MAX_TURNS) {
+            while (pendingToolCalls.isNotEmpty()) {
+                val tc = pendingToolCalls.first()
+                val spec = AiTools.spec(tc.name)
+                if (spec?.kind == AiTools.Kind.ACTION) {
+                    _state.update { it.copy(pendingAction = describeAction(tc), busy = false, stage = null) }
+                    return
+                }
+                pendingToolCalls = pendingToolCalls.drop(1)
+                logger.log("ai", "调用工具 ${tc.name}（${tc.arguments.take(200)}）")
+                appendToolResult(tc, runner.run(tc))
+                _state.update { it.copy(stage = "思考中…") }
+            }
+            _state.update { it.copy(stage = "思考中…") }
+            val result = client.chatWithTools(model, historyForRequest(), tools, SYSTEM_PROMPT)
+            history = history + AiMessage(role = "assistant", text = result.text, toolCalls = result.toolCalls)
+            pendingToolCalls = result.toolCalls
+            publish()
+            if (pendingToolCalls.isEmpty()) return
+        }
+        logger.log("ai", "达到最大工具轮数 $MAX_TURNS，停止")
+    }
+
+    private fun appendToolResult(tc: AiToolCall, outcome: ToolOutcome) {
+        history = history + AiMessage(role = "tool", text = outcome.text, toolCallId = tc.id)
+        if (outcome.images.isNotEmpty()) {
+            history = history + AiMessage(role = "user", text = null, images = outcome.images)
+        }
+        publish()
+    }
+
+    private fun describeAction(tc: AiToolCall): PendingAction {
+        val args = AiTools.parseArgs(tc.arguments)
+        return when (tc.name) {
+            AiTools.ENQUEUE_UPLOAD -> {
+                val items = args.optStringList(AiTools.ARG_ITEMS)
+                val target = args.optString(AiTools.ARG_TARGET_DIR) ?: "/"
+                val cleanup = when (args.optString(AiTools.ARG_CLEANUP_MODE)) {
+                    AiTools.CLEANUP_IMMEDIATE -> "上传后本地立即清理（移入回收站）"
+                    AiTools.CLEANUP_NONE -> "上传后不动本地文件"
+                    else -> "上传后本地进入待清理列表"
+                }
+                val tail = if (items.size > 20) listOf("… 等 ${items.size} 项") else emptyList()
+                PendingAction(
+                    id = tc.id,
+                    title = "加入上传队列",
+                    lines = listOf("目标目录：$target", "上传后：$cleanup", "共 ${items.size} 项：") +
+                        items.take(20) + tail,
+                )
+            }
+
+            AiTools.TRASH_LOCAL -> {
+                val paths = args.optStringList(AiTools.ARG_PATHS)
+                val tail = if (paths.size > 20) listOf("… 等 ${paths.size} 项") else emptyList()
+                PendingAction(
+                    id = tc.id,
+                    title = "删除本地文件（移入回收站，可恢复）",
+                    lines = listOf("共 ${paths.size} 项：") + paths.take(20) + tail,
+                )
+            }
+
+            else -> PendingAction(tc.id, tc.name, listOf(tc.arguments.take(300)))
+        }
+    }
+
+    private fun onError(e: Exception) {
+        val msg = e.message ?: e.javaClass.simpleName
+        logger.log("ai", "AI 助手对话失败：$msg")
+        _state.update { it.copy(error = msg) }
     }
 
     private fun publish() {
@@ -145,8 +264,8 @@ class AiAgentViewModel @Inject constructor(
     }
 
     companion object {
-        /** 单轮对话最多工具往返次数,防模型打转/烧钱 */
-        private const val MAX_ITERS = 8
+        /** 单轮对话最多模型往返次数,防模型打转/烧钱 */
+        private const val MAX_TURNS = 8
 
         private val SYSTEM_PROMPT = """
             你是「杂物仓库」Android 客户端的文件归档助手。用户手机上的文件需要整理归档到 OpenList 仓库。
@@ -155,7 +274,7 @@ class AiAgentViewModel @Inject constructor(
             - 哪些文件/文件夹建议上传到仓库的哪个目录(尽量沿用仓库已有目录结构);
             - 上传完成后本地原件如何处理(不管 / 进待清理列表 / 立即清理)。
             只依据工具返回的真实文件名与路径,不要编造不存在的文件。用中文、简洁、可执行。
-            注意:你只能建议,真正的上传与删除需用户在界面上确认。
+            上传与删除是敏感操作,系统会在真正执行前让用户确认,你可以放心提出建议。
         """.trimIndent()
     }
 }

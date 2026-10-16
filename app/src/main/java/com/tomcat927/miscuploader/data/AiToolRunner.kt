@@ -16,6 +16,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonObject
 
 /** 工具执行结果:文本结果 + 需注入给模型的图片(OpenAI 的 tool 消息是纯文本,图片另走 user 消息) */
 data class ToolOutcome(val text: String, val images: List<AiImage> = emptyList())
@@ -29,6 +30,7 @@ class AiToolRunner @Inject constructor(
     private val connection: ConnectionManager,
     private val rootShell: RootShell,
     private val pendingCleanupDao: PendingCleanupDao,
+    private val uploadRepository: UploadRepository,
     private val logger: AppLogger,
 ) {
 
@@ -52,6 +54,8 @@ class AiToolRunner @Inject constructor(
                 )
 
                 AiTools.LIST_PENDING_CLEANUP -> listPending()
+                AiTools.ENQUEUE_UPLOAD -> enqueueUpload(args)
+                AiTools.TRASH_LOCAL -> trashLocal(args)
                 else -> ToolOutcome("错误：工具 ${call.name} 不可用。")
             }
         }.getOrElse { e ->
@@ -169,6 +173,46 @@ class AiToolRunner @Inject constructor(
         if (items.isEmpty()) return ToolOutcome("待清理列表为空。")
         val lines = items.take(maxListEntries).map { "${it.localPath}（已归档到 ${it.remotePath}）" }
         return ToolOutcome("待清理（${items.size} 项）:\n" + lines.joinToString("\n"))
+    }
+
+    // ---- 动作工具实现(仅在被用户确认后由 ViewModel 调用) ----
+
+    private fun enqueueUpload(args: JsonObject): ToolOutcome {
+        val items = args.optStringList(AiTools.ARG_ITEMS)
+        val target = args.optString(AiTools.ARG_TARGET_DIR)
+        if (items.isEmpty()) return ToolOutcome("错误：缺少 items 参数。")
+        if (target.isNullOrBlank()) return ToolOutcome("错误：缺少 target_dir 参数。")
+        val targetDir = UploadPlanning.normalizeDir(target)
+        val cleanupAfter = AiTools.cleanupAfter(args.optString(AiTools.ARG_CLEANUP_MODE))
+        val tasks = items.flatMap { p ->
+            val f = File(p)
+            when {
+                f.isFile -> listOf(UploadTask(f, targetDir, f.name))
+                f.isDirectory -> {
+                    val parent = f.parentFile?.absolutePath ?: f.absolutePath
+                    f.walkTopDown().filter { it.isFile }.map { child ->
+                        UploadTask(child, targetDir, child.absolutePath.removePrefix(parent).trimStart('/'))
+                    }.toList()
+                }
+
+                else -> emptyList()
+            }
+        }
+        if (tasks.isEmpty()) return ToolOutcome("没有可上传的文件（路径不存在或为空）。")
+        uploadRepository.enqueue(tasks, cleanupAfter)
+        val cleanup = when (cleanupAfter) {
+            2 -> "，上传后本地立即清理（移入回收站）"
+            1 -> "，上传后本地进入待清理列表"
+            else -> ""
+        }
+        return ToolOutcome("已加入上传队列：${tasks.size} 个文件 → $targetDir$cleanup")
+    }
+
+    private fun trashLocal(args: JsonObject): ToolOutcome {
+        val paths = args.optStringList(AiTools.ARG_PATHS)
+        if (paths.isEmpty()) return ToolOutcome("错误：缺少 paths 参数。")
+        val moved = LocalTrash.moveToTrash(paths)
+        return ToolOutcome("已移入回收站 $moved/${paths.size} 项（.misc-trash，可恢复）。")
     }
 
     private fun defaultRoot(): String = Environment.getExternalStorageDirectory().absolutePath
