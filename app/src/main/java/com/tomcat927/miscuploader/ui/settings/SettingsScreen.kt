@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +52,9 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tomcat927.miscuploader.data.SettingsRepository
 import com.tomcat927.miscuploader.data.UploadMode
@@ -68,6 +72,20 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
     val uploadConcurrency by viewModel.uploadConcurrency.collectAsState()
     val uploadMaxRetries by viewModel.uploadMaxRetries.collectAsState()
     val wifiOnly by viewModel.wifiOnly.collectAsState()
+
+    // 失焦兜底(修:返回键收键盘/点击空白不触发 onFocusChanged(false),无保存按钮的字段会静默丢数据)
+    // 离开页面(onDispose)与退后台/被杀前(ON_STOP)各提交一次;每个 commit 内有 dirty 守卫,未编辑不会空写
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) viewModel.commitAll()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            viewModel.commitAll()
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("设置") }) },

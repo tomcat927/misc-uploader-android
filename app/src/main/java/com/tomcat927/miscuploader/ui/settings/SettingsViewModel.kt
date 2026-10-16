@@ -260,6 +260,14 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settings.savePigalleryBase(_uiState.value.pigalleryBase) }
     }
 
+    /** 离开页面/退后台兜底提交:所有「失焦即存」字段各提交一次(dirty 守卫,未编辑跳过) */
+    fun commitAll() {
+        commitFields()
+        commitPigallery()
+        commitShareDir()
+        commitAi()
+    }
+
     // ---- 上传设置(拍板 2026-10-04:并发/最大重试/仅 Wi-Fi/默认分享目录) ----
 
     val uploadConcurrency: StateFlow<Int> = settings.uploadConcurrencyFlow
