@@ -6,14 +6,22 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [UploadItemEntity::class, HistoryEntity::class, PendingCleanupEntity::class],
-    version = 3,
+    entities = [
+        UploadItemEntity::class,
+        HistoryEntity::class,
+        PendingCleanupEntity::class,
+        AiConversationEntity::class,
+        AiMessageEntity::class,
+    ],
+    version = 4,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun uploadDao(): UploadDao
 
     abstract fun pendingCleanupDao(): PendingCleanupDao
+
+    abstract fun aiConversationDao(): AiConversationDao
 
     companion object {
         /**
@@ -55,6 +63,36 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL(
                     "CREATE UNIQUE INDEX IF NOT EXISTS `index_pending_cleanup_localPath` " +
                         "ON `pending_cleanup` (`localPath`)",
+                )
+            }
+        }
+
+        /**
+         * v3→v4(AI 助手会话式 agent,拍板 2026-10-16):新建 ai_conversation(多会话) + ai_message(消息)。
+         * 手写 Migration,保留队列/历史/待清理。
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `ai_conversation` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`title` TEXT NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `ai_message` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`conversationId` INTEGER NOT NULL, " +
+                        "`role` TEXT NOT NULL, " +
+                        "`text` TEXT, " +
+                        "`toolCallsJson` TEXT, " +
+                        "`toolCallId` TEXT, " +
+                        "`createdAt` INTEGER NOT NULL)",
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_ai_message_conversationId` " +
+                        "ON `ai_message` (`conversationId`)",
                 )
             }
         }

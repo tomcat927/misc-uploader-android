@@ -1,5 +1,6 @@
 package com.tomcat927.miscuploader.ui.ai
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +16,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.Button
@@ -22,6 +26,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -41,22 +46,123 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tomcat927.miscuploader.core.AiMessage
+import com.tomcat927.miscuploader.data.db.AiConversationEntity
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
- * AI 助手(拍板 2026-10-16):会话式 agent,只读工具后台自动执行。
- * P3 单会话;多会话 + 动作工具 + 持久化在后续阶段接入。
+ * AI 助手(拍板 2026-10-16):多会话 + 会话内连续对话;只读工具自动,动作工具需确认。
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AiScreen(
     onOpenSettings: () -> Unit = {},
     viewModel: AiAgentViewModel = viewModel(),
 ) {
-    val state by viewModel.state.collectAsState()
     val enabled by viewModel.aiEnabled.collectAsState()
+    val activeId by viewModel.activeConversationId.collectAsState()
+    val conversations by viewModel.conversations.collectAsState()
+
+    when {
+        !enabled -> NotEnabledScreen(onOpenSettings)
+        activeId == null -> ConversationListScreen(
+            conversations = conversations,
+            onNew = viewModel::newConversation,
+            onOpen = viewModel::openConversation,
+            onDelete = viewModel::deleteConversation,
+        )
+
+        else -> ChatScreen(
+            title = conversations.firstOrNull { it.id == activeId }?.title ?: "AI 助手",
+            viewModel = viewModel,
+            onBack = viewModel::backToList,
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NotEnabledScreen(onOpenSettings: () -> Unit) {
+    Scaffold(topBar = { TopAppBar(title = { Text("AI 助手") }) }) { padding ->
+        Box(Modifier.padding(padding).fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("AI 助手未启用", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "到「设置 → AI 助手」填写接口地址、密钥并选择模型后即可在此对话。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(onClick = onOpenSettings) { Text("去设置") }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ConversationListScreen(
+    conversations: List<AiConversationEntity>,
+    onNew: () -> Unit,
+    onOpen: (Long) -> Unit,
+    onDelete: (Long) -> Unit,
+) {
+    Scaffold(
+        topBar = { TopAppBar(title = { Text("AI 助手") }) },
+        floatingActionButton = {
+            FloatingActionButton(onClick = onNew) {
+                Icon(Icons.Filled.Add, contentDescription = "新建会话")
+            }
+        },
+    ) { padding ->
+        if (conversations.isEmpty()) {
+            Box(Modifier.padding(padding).fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                Text(
+                    "还没有会话，点右下角「+」新建一个，让 AI 帮你整理手机文件。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
+            LazyColumn(modifier = Modifier.padding(padding).fillMaxSize()) {
+                items(conversations) { conv ->
+                    ConversationRow(conv, onOpen = { onOpen(conv.id) }, onDelete = { onDelete(conv.id) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConversationRow(conv: AiConversationEntity, onOpen: () -> Unit, onDelete: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(conv.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                formatTime(conv.updatedAt),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        IconButton(onClick = onDelete) {
+            Icon(Icons.Filled.DeleteOutline, contentDescription = "删除会话")
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatScreen(title: String, viewModel: AiAgentViewModel, onBack: () -> Unit) {
+    val state by viewModel.state.collectAsState()
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
@@ -67,10 +173,15 @@ fun AiScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("AI 助手") },
+                title = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                    }
+                },
                 actions = {
                     if (state.messages.isNotEmpty()) {
-                        IconButton(onClick = viewModel::clear) {
+                        IconButton(onClick = viewModel::clearConversation) {
                             Icon(Icons.Filled.DeleteSweep, contentDescription = "清空会话")
                         }
                     }
@@ -84,11 +195,6 @@ fun AiScreen(
                 .fillMaxSize()
                 .imePadding(),
         ) {
-            if (!enabled) {
-                NotEnabledHint(onOpenSettings)
-                return@Column
-            }
-
             LazyColumn(
                 state = listState,
                 modifier = Modifier
@@ -98,25 +204,15 @@ fun AiScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 item { Spacer(Modifier.size(4.dp)) }
-                if (state.messages.isEmpty()) {
-                    item { EmptyHint() }
-                }
+                if (state.messages.isEmpty()) item { EmptyHint() }
                 items(state.messages) { msg -> MessageRow(msg) }
-                if (state.busy) {
-                    item { BusyRow(state.stage) }
-                }
-                state.error?.let { err ->
-                    item { ErrorCard(err, viewModel::dismissError) }
-                }
+                if (state.busy) item { BusyRow(state.stage) }
+                state.error?.let { err -> item { ErrorCard(err, viewModel::dismissError) } }
                 item { Spacer(Modifier.size(8.dp)) }
             }
 
             state.pendingAction?.let { pa ->
-                ConfirmCard(
-                    action = pa,
-                    onApprove = viewModel::approveAction,
-                    onReject = viewModel::rejectAction,
-                )
+                ConfirmCard(pa, viewModel::approveAction, viewModel::rejectAction)
             }
 
             InputBar(
@@ -130,21 +226,6 @@ fun AiScreen(
                 },
                 onCancel = viewModel::cancel,
             )
-        }
-    }
-}
-
-@Composable
-private fun NotEnabledHint(onOpenSettings: () -> Unit) {
-    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("AI 助手未启用", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "到「设置 → AI 助手」填写接口地址、密钥并选择模型后即可在此对话。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            TextButton(onClick = onOpenSettings) { Text("去设置") }
         }
     }
 }
@@ -241,10 +322,7 @@ private fun ErrorCard(message: String, onDismiss: () -> Unit) {
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 message,
                 modifier = Modifier.weight(1f),
@@ -313,3 +391,6 @@ private fun InputBar(
         }
     }
 }
+
+private fun formatTime(ms: Long): String =
+    SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(ms))

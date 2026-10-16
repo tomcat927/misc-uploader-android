@@ -8,10 +8,12 @@ import com.tomcat927.miscuploader.core.AiToolCall
 import com.tomcat927.miscuploader.core.AiTools
 import com.tomcat927.miscuploader.core.optString
 import com.tomcat927.miscuploader.core.optStringList
+import com.tomcat927.miscuploader.data.AiChatRepository
 import com.tomcat927.miscuploader.data.AiToolRunner
 import com.tomcat927.miscuploader.data.AppLogger
 import com.tomcat927.miscuploader.data.SettingsRepository
 import com.tomcat927.miscuploader.data.ToolOutcome
+import com.tomcat927.miscuploader.data.db.AiConversationEntity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -44,13 +46,13 @@ data class AiChatUiState(
 
 /**
  * AI 助手会话式 agent(拍板 2026-10-16)。
- * 只读工具后台自动执行;动作工具(enqueue_upload/trash_local)暂停循环等用户确认后再执行。
- * P4:动作工具 + 确认;多会话持久化在 P5。
+ * 多会话 + 持久化(P5);只读工具后台自动执行;动作工具暂停循环等用户确认。
  */
 @HiltViewModel
 class AiAgentViewModel @Inject constructor(
     private val settings: SettingsRepository,
     private val runner: AiToolRunner,
+    private val chatRepo: AiChatRepository,
     private val logger: AppLogger,
     private val okHttpClient: OkHttpClient,
 ) : ViewModel() {
@@ -58,26 +60,84 @@ class AiAgentViewModel @Inject constructor(
     private val _state = MutableStateFlow(AiChatUiState())
     val state: StateFlow<AiChatUiState> = _state.asStateFlow()
 
+    /** 会话列表(按更新时间倒序) */
+    val conversations: StateFlow<List<AiConversationEntity>> = chatRepo.conversations()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _activeId = MutableStateFlow<Long?>(null)
+    val activeConversationId: StateFlow<Long?> = _activeId.asStateFlow()
+
     /** AI 助手总开关(未启用时 UI 给引导) */
     val aiEnabled: StateFlow<Boolean> = settings.aiEnabledFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     private var history: List<AiMessage> = emptyList()
-
-    /** 已由模型发起、尚未回填结果的工具调用(动作工具在此排队等确认) */
     private var pendingToolCalls: List<AiToolCall> = emptyList()
     private var sessionClient: AiClient? = null
     private var sessionModel: String? = null
     private var job: Job? = null
 
+    // ---- 会话管理 ----
+
+    fun newConversation() {
+        job?.cancel()
+        job = viewModelScope.launch { openInternal(chatRepo.createConversation(DEFAULT_TITLE)) }
+    }
+
+    fun openConversation(id: Long) {
+        job?.cancel()
+        job = viewModelScope.launch { openInternal(id) }
+    }
+
+    private suspend fun openInternal(id: Long) {
+        _activeId.value = id
+        pendingToolCalls = emptyList()
+        history = chatRepo.loadMessages(id)
+        _state.update { AiChatUiState(messages = history) }
+    }
+
+    fun backToList() {
+        job?.cancel()
+        job = null
+        _activeId.value = null
+        history = emptyList()
+        pendingToolCalls = emptyList()
+        _state.update { AiChatUiState() }
+    }
+
+    fun deleteConversation(id: Long) {
+        viewModelScope.launch {
+            chatRepo.delete(id)
+            if (_activeId.value == id) backToList()
+        }
+    }
+
+    fun clearConversation() {
+        val id = _activeId.value ?: return
+        job?.cancel()
+        job = null
+        job = viewModelScope.launch {
+            chatRepo.clearMessages(id)
+            history = emptyList()
+            pendingToolCalls = emptyList()
+            _state.update { AiChatUiState() }
+        }
+    }
+
+    // ---- 对话 ----
+
     fun send(text: String) {
         val t = text.trim()
         if (t.isEmpty() || job?.isActive == true || _state.value.pendingAction != null) return
-        history = history + AiMessage(role = "user", text = t)
-        publish()
         job = viewModelScope.launch {
             _state.update { it.copy(busy = true, error = null, stage = "思考中…") }
             try {
+                if (_activeId.value == null) {
+                    _activeId.value = chatRepo.createConversation(titleFor(t))
+                }
+                val firstUser = history.none { it.role == "user" }
+                record(AiMessage(role = "user", text = t))
+                if (firstUser) _activeId.value?.let { chatRepo.rename(it, titleFor(t)) }
                 if (prepareSession()) drive()
             } catch (e: CancellationException) {
                 throw e
@@ -89,7 +149,6 @@ class AiAgentViewModel @Inject constructor(
         }
     }
 
-    /** 用户确认执行当前待确认动作 */
     fun approveAction() {
         val tc = pendingToolCalls.firstOrNull() ?: return
         _state.update { it.copy(pendingAction = null, busy = true, stage = "执行中…") }
@@ -110,7 +169,6 @@ class AiAgentViewModel @Inject constructor(
         }
     }
 
-    /** 用户拒绝当前待确认动作:回填「已拒绝」并继续循环 */
     fun rejectAction() {
         val tc = pendingToolCalls.firstOrNull() ?: return
         _state.update { it.copy(pendingAction = null, busy = true, stage = null) }
@@ -130,23 +188,11 @@ class AiAgentViewModel @Inject constructor(
         }
     }
 
-    /** 取消进行中的一轮 */
     fun cancel() {
         job?.cancel()
         job = null
         pendingToolCalls = emptyList()
         _state.update { it.copy(busy = false, stage = null, pendingAction = null) }
-    }
-
-    /** 清空当前会话 */
-    fun clear() {
-        job?.cancel()
-        job = null
-        history = emptyList()
-        pendingToolCalls = emptyList()
-        sessionClient = null
-        sessionModel = null
-        _state.update { AiChatUiState() }
     }
 
     fun dismissError() {
@@ -196,19 +242,24 @@ class AiAgentViewModel @Inject constructor(
             }
             _state.update { it.copy(stage = "思考中…") }
             val result = client.chatWithTools(model, historyForRequest(), tools, SYSTEM_PROMPT)
-            history = history + AiMessage(role = "assistant", text = result.text, toolCalls = result.toolCalls)
+            record(AiMessage(role = "assistant", text = result.text, toolCalls = result.toolCalls))
             pendingToolCalls = result.toolCalls
-            publish()
             if (pendingToolCalls.isEmpty()) return
         }
         logger.log("ai", "达到最大工具轮数 $MAX_TURNS，停止")
     }
 
-    private fun appendToolResult(tc: AiToolCall, outcome: ToolOutcome) {
-        history = history + AiMessage(role = "tool", text = outcome.text, toolCallId = tc.id)
+    private suspend fun appendToolResult(tc: AiToolCall, outcome: ToolOutcome) {
+        record(AiMessage(role = "tool", text = outcome.text, toolCallId = tc.id))
         if (outcome.images.isNotEmpty()) {
-            history = history + AiMessage(role = "user", text = null, images = outcome.images)
+            record(AiMessage(role = "user", text = null, images = outcome.images))
         }
+    }
+
+    /** 追加消息:内存历史 + 落库(带图消息不落库) */
+    private suspend fun record(message: AiMessage) {
+        history = history + message
+        _activeId.value?.let { chatRepo.appendMessage(it, message) }
         publish()
     }
 
@@ -263,7 +314,12 @@ class AiAgentViewModel @Inject constructor(
         return history.filterIndexed { i, m -> m.images.isEmpty() || i == lastImageIdx }
     }
 
+    private fun titleFor(text: String): String =
+        text.replace('\n', ' ').trim().take(40).ifBlank { DEFAULT_TITLE }
+
     companion object {
+        private const val DEFAULT_TITLE = "新会话"
+
         /** 单轮对话最多模型往返次数,防模型打转/烧钱 */
         private const val MAX_TURNS = 8
 

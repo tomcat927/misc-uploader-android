@@ -3,6 +3,7 @@ package com.tomcat927.miscuploader.di
 import android.content.Context
 import androidx.room.Room
 import com.tomcat927.miscuploader.data.db.AppDatabase
+import com.tomcat927.miscuploader.data.db.AiConversationDao
 import com.tomcat927.miscuploader.data.db.PendingCleanupDao
 import com.tomcat927.miscuploader.data.db.UploadDao
 import dagger.Module
@@ -41,7 +42,7 @@ object AppModule {
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AppDatabase =
         Room.databaseBuilder(context, AppDatabase::class.java, "misc-uploader.db")
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
             .build()
 
     @Provides
@@ -51,4 +52,8 @@ object AppModule {
     @Provides
     @Singleton
     fun providePendingCleanupDao(db: AppDatabase): PendingCleanupDao = db.pendingCleanupDao()
+
+    @Provides
+    @Singleton
+    fun provideAiConversationDao(db: AppDatabase): AiConversationDao = db.aiConversationDao()
 }

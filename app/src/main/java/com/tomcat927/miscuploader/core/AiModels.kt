@@ -27,6 +27,7 @@ data class AiTool(
 )
 
 /** 模型请求的一次工具调用;arguments 为原始 JSON 字符串,由调用方解析 */
+@Serializable
 data class AiToolCall(
     val id: String,
     val name: String,
