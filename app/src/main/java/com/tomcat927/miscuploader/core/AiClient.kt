@@ -116,7 +116,180 @@ class AiClient(
     suspend fun verifyVision(model: String): String =
         chatVision(model, PROBE_PROMPT, listOf(AiImage(PROBE_PNG_BASE64, "image/png")))
 
+    // ---- 工具调用(agent) ----
+
+    /**
+     * 带工具的多轮对话:发 `tools` + `tool_choice`,解析 `message.tool_calls`。
+     * content 与 tool_calls 可同时为空才报错;仅返回 tool_calls 是合法回合。
+     */
+    suspend fun chatWithTools(
+        model: String,
+        messages: List<AiMessage>,
+        tools: List<AiTool>,
+        systemPrompt: String? = null,
+        toolChoice: JsonElement = JsonPrimitive("auto"),
+    ): AiChatResult {
+        val payload = buildJsonObject {
+            put("model", model)
+            put("max_tokens", MAX_TOKENS)
+            put("tool_choice", toolChoice)
+            put(
+                "tools",
+                buildJsonArray {
+                    tools.forEach { t ->
+                        add(
+                            buildJsonObject {
+                                put("type", "function")
+                                put(
+                                    "function",
+                                    buildJsonObject {
+                                        put("name", t.name)
+                                        put("description", t.description)
+                                        put("parameters", t.parameters)
+                                    },
+                                )
+                            },
+                        )
+                    }
+                },
+            )
+            put(
+                "messages",
+                buildJsonArray {
+                    if (systemPrompt != null) add(systemMessage(systemPrompt))
+                    messages.forEach { add(messageJson(it)) }
+                },
+            )
+        }
+        val req = Request.Builder()
+            .url("$baseUrl/chat/completions")
+            .header("Authorization", "Bearer $apiKey")
+            .post(payload.toString().toRequestBody(JSON_MEDIA))
+            .build()
+        return parseChatResult(execute(req))
+    }
+
+    /**
+     * 工具调用能力探针:强制模型调用一个空探针工具,返回是否拿到 tool_calls。
+     * 端点不支持 tools 时通常抛 AiException(由调用方展示)。
+     */
+    suspend fun probeTools(model: String): Boolean {
+        val probe = AiTool(
+            name = "noop_probe",
+            description = "探针工具,仅用于验证工具调用能力,收到即回传。",
+            parameters = buildJsonObject {
+                put("type", "object")
+                put(
+                    "properties",
+                    buildJsonObject { put("ping", buildJsonObject { put("type", "string") }) },
+                )
+                put("required", buildJsonArray { add(JsonPrimitive("ping")) })
+            },
+        )
+        val result = chatWithTools(
+            model = model,
+            messages = listOf(AiMessage(role = "user", text = "请调用 noop_probe 工具,ping=pong。")),
+            tools = listOf(probe),
+            toolChoice = buildJsonObject {
+                put("type", "function")
+                put("function", buildJsonObject { put("name", "noop_probe") })
+            },
+        )
+        return result.toolCalls.any { it.name == "noop_probe" }
+    }
+
     // ---- 内部 ----
+
+    /** 把统一消息序列化成 OpenAI messages 元素(含 tool / 带 tool_calls 的 assistant / 带图的 user) */
+    private fun messageJson(m: AiMessage): JsonObject = buildJsonObject {
+        put("role", m.role)
+        when (m.role) {
+            "tool" -> {
+                put("tool_call_id", m.toolCallId ?: "")
+                put("content", m.text ?: "")
+            }
+
+            "assistant" -> {
+                if (m.toolCalls.isEmpty()) {
+                    put("content", m.text ?: "")
+                } else {
+                    put(
+                        "tool_calls",
+                        buildJsonArray {
+                            m.toolCalls.forEach { tc ->
+                                add(
+                                    buildJsonObject {
+                                        put("id", tc.id)
+                                        put("type", "function")
+                                        put(
+                                            "function",
+                                            buildJsonObject {
+                                                put("name", tc.name)
+                                                put("arguments", tc.arguments)
+                                            },
+                                        )
+                                    },
+                                )
+                            }
+                        },
+                    )
+                    if (m.text != null) put("content", m.text) else put("content", JsonNull)
+                }
+            }
+
+            else -> { // user / system
+                if (m.images.isEmpty()) {
+                    put("content", m.text ?: "")
+                } else {
+                    put(
+                        "content",
+                        buildJsonArray {
+                            add(buildJsonObject { put("type", "text"); put("text", m.text ?: "") })
+                            m.images.forEach { img ->
+                                add(
+                                    buildJsonObject {
+                                        put("type", "image_url")
+                                        put(
+                                            "image_url",
+                                            buildJsonObject {
+                                                put("url", "data:${img.mime};base64,${img.base64}")
+                                            },
+                                        )
+                                    },
+                                )
+                            }
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    /** 解析 chat/completions 响应:文本 + tool_calls + finish_reason;两者皆空才报错 */
+    private fun parseChatResult(body: String): AiChatResult {
+        val root = runCatching { json.parseToJsonElement(body).jsonObject }
+            .getOrElse { throw AiException("响应不是 JSON：${body.take(200)}") }
+        val choices = root["choices"]?.jsonArray ?: throw AiException("响应缺少 choices")
+        val choice = choices.firstOrNull()?.jsonObject
+        val message = choice?.get("message")?.jsonObject
+        val text = message?.let { messageText(it) }
+        val toolCalls = message?.get("tool_calls")?.jsonArray?.mapNotNull { el ->
+            val o = el as? JsonObject ?: return@mapNotNull null
+            val id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val fn = o["function"]?.jsonObject ?: return@mapNotNull null
+            val name = fn["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val args = fn["arguments"]?.let { a ->
+                if (a is JsonPrimitive) a.contentOrNull ?: a.toString() else a.toString()
+            } ?: "{}"
+            AiToolCall(id, name, args)
+        }.orEmpty()
+        val finish = choice?.get("finish_reason")?.jsonPrimitive?.contentOrNull
+        if (text.isNullOrBlank() && toolCalls.isEmpty()) {
+            debugLog?.invoke("ai: 响应无可用文本与工具调用（前 400 字符）：${body.take(400)}")
+            throw AiException(if (message == null) "响应缺少 message" else "响应缺少 message.content")
+        }
+        return AiChatResult(text, toolCalls, finish)
+    }
 
     private fun systemMessage(text: String) =
         buildJsonObject { put("role", "system"); put("content", text) }
