@@ -232,6 +232,8 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 testing = state.aiTesting,
                 status = state.aiStatus,
                 visionOk = state.aiVisionOk,
+                toolsTesting = state.aiToolsTesting,
+                toolsOk = state.aiToolsOk,
                 onEnabledChange = viewModel::setAiEnabled,
                 onBaseUrlChange = viewModel::onAiBaseUrlChange,
                 onApiKeyChange = viewModel::onAiApiKeyChange,
@@ -241,6 +243,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 onSelectModel = viewModel::selectAiModel,
                 onFetchModels = viewModel::fetchAiModels,
                 onVerifyVision = viewModel::verifyAiVision,
+                onVerifyTools = viewModel::verifyAiTools,
             )
 
             DiagnosticsCard(

@@ -58,6 +58,8 @@ internal fun AiAssistantCard(
     testing: Boolean,
     status: String?,
     visionOk: Boolean?,
+    toolsTesting: Boolean,
+    toolsOk: Boolean?,
     onEnabledChange: (Boolean) -> Unit,
     onBaseUrlChange: (String) -> Unit,
     onApiKeyChange: (String) -> Unit,
@@ -67,6 +69,7 @@ internal fun AiAssistantCard(
     onSelectModel: (String) -> Unit,
     onFetchModels: () -> Unit,
     onVerifyVision: () -> Unit,
+    onVerifyTools: () -> Unit,
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -133,8 +136,17 @@ internal fun AiAssistantCard(
                     }
                     Text("获取模型")
                 }
+            }
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Button(onClick = onVerifyVision, enabled = !testing && model.isNotBlank()) {
                     Text(if (testing) "验证中…" else "验证多模态")
+                }
+                Button(onClick = onVerifyTools, enabled = !toolsTesting && model.isNotBlank()) {
+                    Text(if (toolsTesting) "验证中…" else "验证工具调用")
                 }
             }
 
@@ -150,7 +162,7 @@ internal fun AiAssistantCard(
                 Text(
                     s,
                     style = MaterialTheme.typography.bodySmall,
-                    color = when (visionOk) {
+                    color = when (visionOk ?: toolsOk) {
                         true -> MaterialTheme.colorScheme.primary
                         false -> MaterialTheme.colorScheme.error
                         null -> MaterialTheme.colorScheme.onSurfaceVariant

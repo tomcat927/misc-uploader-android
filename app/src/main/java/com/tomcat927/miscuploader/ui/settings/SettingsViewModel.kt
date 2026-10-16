@@ -64,6 +64,8 @@ data class SettingsUiState(
     val aiTesting: Boolean = false,
     val aiStatus: String? = null,
     val aiVisionOk: Boolean? = null,
+    val aiToolsTesting: Boolean = false,
+    val aiToolsOk: Boolean? = null,
     val diagnostics: DiagnosticsUiState = DiagnosticsUiState(),
 )
 
@@ -406,7 +408,7 @@ class SettingsViewModel @Inject constructor(
                 _uiState.update { it.copy(aiStatus = "缺少 API Key，无法验证") }
                 return@launch
             }
-            _uiState.update { it.copy(aiTesting = true, aiStatus = null, aiVisionOk = null) }
+            _uiState.update { it.copy(aiTesting = true, aiStatus = null, aiVisionOk = null, aiToolsOk = null) }
             runCatching { aiClient(cfg.baseUrl, cfg.apiKey).verifyVision(model) }
                 .onSuccess {
                     _uiState.update { it.copy(aiTesting = false, aiVisionOk = true, aiStatus = "该模型可处理图片 ✓") }
@@ -414,6 +416,47 @@ class SettingsViewModel @Inject constructor(
                 .onFailure { e ->
                     _uiState.update {
                         it.copy(aiTesting = false, aiVisionOk = false, aiStatus = "验证失败：${e.message ?: e.javaClass.simpleName}")
+                    }
+                }
+        }
+    }
+
+    /** 「验证工具调用」:强制模型调一次空探针工具,确认端点支持 tools(function calling) */
+    fun verifyAiTools() {
+        viewModelScope.launch {
+            if (!persistAi()) {
+                _uiState.update { it.copy(aiStatus = "请先填写接口地址") }
+                return@launch
+            }
+            aiDirty = false
+            val model = _uiState.value.aiModel.trim()
+            if (model.isEmpty()) {
+                _uiState.update { it.copy(aiStatus = "请先选择模型") }
+                return@launch
+            }
+            val cfg = settings.loadAiDecryptedOnce()
+            if (cfg == null) {
+                _uiState.update { it.copy(aiStatus = "缺少 API Key，无法验证") }
+                return@launch
+            }
+            _uiState.update { it.copy(aiToolsTesting = true, aiStatus = null, aiVisionOk = null, aiToolsOk = null) }
+            runCatching { aiClient(cfg.baseUrl, cfg.apiKey).probeTools(model) }
+                .onSuccess { ok ->
+                    _uiState.update {
+                        it.copy(
+                            aiToolsTesting = false,
+                            aiToolsOk = ok,
+                            aiStatus = if (ok) {
+                                "该模型支持工具调用 ✓"
+                            } else {
+                                "该模型未返回工具调用（可能不支持 tools，AI 助手无法调用工具）"
+                            },
+                        )
+                    }
+                }
+                .onFailure { e ->
+                    _uiState.update {
+                        it.copy(aiToolsTesting = false, aiToolsOk = false, aiStatus = "验证失败：${e.message ?: e.javaClass.simpleName}")
                     }
                 }
         }
