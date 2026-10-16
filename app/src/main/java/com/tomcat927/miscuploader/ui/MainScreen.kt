@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tomcat927.miscuploader.ui.home.HomeScreen
 import com.tomcat927.miscuploader.ui.home.HomeViewModel
+import com.tomcat927.miscuploader.ui.ai.AiScreen
 import com.tomcat927.miscuploader.ui.queue.QueueScreen
 import com.tomcat927.miscuploader.ui.settings.SettingsScreen
 import com.tomcat927.miscuploader.ui.update.UpdateState
@@ -55,6 +57,7 @@ import kotlinx.coroutines.launch
 private enum class MainTab(val label: String) {
     FILES("文件"),
     QUEUE("队列"),
+    AI("AI"),
     SETTINGS("设置"),
 }
 
@@ -113,6 +116,7 @@ fun MainScreen() {
                                 when (t) {
                                     MainTab.FILES -> Icons.Filled.Folder
                                     MainTab.QUEUE -> Icons.Filled.UploadFile
+                                    MainTab.AI -> Icons.Filled.SmartToy
                                     MainTab.SETTINGS -> Icons.Filled.Settings
                                 },
                                 contentDescription = t.label,
@@ -128,6 +132,7 @@ fun MainScreen() {
             when (tab) {
                 MainTab.FILES -> HomeScreen()
                 MainTab.QUEUE -> QueueScreen()
+                MainTab.AI -> AiScreen(onOpenSettings = { tab = MainTab.SETTINGS })
                 MainTab.SETTINGS -> SettingsScreen()
             }
         }
